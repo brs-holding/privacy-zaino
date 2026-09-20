@@ -8,10 +8,12 @@ and this library adheres to Rust's notion of
 ## [Unreleased]
 
 ### Added
+- Custom testnet startup checks against the validator's genesis and upgrade schedule.
 ### Changed
 ### Deprecated
 ### Removed
 ### Fixed
+- Lightwallet clients receive the configured Regtest chain name when Zebra RPC reports `test`.
 
 ## [0.9.0] - 2026-09-11
 

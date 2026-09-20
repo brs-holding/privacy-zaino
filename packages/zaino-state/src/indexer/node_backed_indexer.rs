@@ -2101,7 +2101,15 @@ impl<Source: BlockchainSource + WithChainHeadSource + WithChainStoreSource> Ligh
             version: self.data.build_info().version(),
             vendor: "ZingoLabs ZainoD".to_string(),
             taddr_support: true,
-            chain_name: blockchain_info.chain.clone(),
+            // Zebra labels both public testnet and regtest RPC as "test".
+            // Light clients need the configured network kind to select the
+            // correct address prefixes and upgrade schedule.
+            chain_name: match self.config.network {
+                zaino_common::Network::Mainnet => "main",
+                zaino_common::Network::PubTestnet => "test",
+                zaino_common::Network::Regtest => "regtest",
+                zaino_common::Network::CustomTestnet { .. } => "privacy-testnet",
+            }.to_string(),
             sapling_activation_height: u64::from(sapling_activation_height),
             consensus_branch_id,
             block_height: u64::from(u32::from(blockchain_info.blocks)),

@@ -8,6 +8,7 @@ and this library adheres to Rust's notion of
 ## [Unreleased]
 
 ### Added
+- Explicit CustomTestnet identity with expected genesis hash and upgrade schedule.
 ### Changed
 ### Deprecated
 ### Removed

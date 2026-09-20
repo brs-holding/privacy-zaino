@@ -173,6 +173,9 @@ these before changing the structure they describe.
 - [ADR-0012](./docs/adr/0012-chain-store-subsystem-separation.md): the finalised state is a subsystem behind ports, and its database is one implementation of them.
 
 ### Crate usage guides
+
+- [`zaino-common`](./packages/zaino-common/usage.md): project custom-testnet configuration.
+- [`zaino-state`](./packages/zaino-state/usage.md): validator identity and schedule checks.
 Practical guidance for working *in* a crate — its scope, its invariants, and the
 mistakes its design is trying to prevent.
 - [`zaino-status`](./packages/zaino-status/usage.md): the status vocabulary, and why it stays vocabulary.

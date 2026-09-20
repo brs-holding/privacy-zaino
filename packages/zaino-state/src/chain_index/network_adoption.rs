@@ -21,7 +21,7 @@
 
 use tracing::info;
 use zaino_primitives::types::NetworkUpgradeInfo;
-use zaino_source::GetBlockchainInfo;
+use zaino_source::{GetBlock, GetBlockchainInfo};
 
 use crate::chain_index::source::BlockchainSourceError;
 use crate::config::CommonBackendConfig;
@@ -47,7 +47,7 @@ mod zebra_bridge;
 /// without being re-detected here.
 pub(crate) async fn adopt_network(
     common: &CommonBackendConfig,
-    source: &impl GetBlockchainInfo,
+    source: &(impl GetBlockchainInfo + GetBlock),
 ) -> Result<zebra_chain::parameters::Network, BlockchainSourceError> {
     // Read the schedule through the source port: the domain `BlockchainInfo`,
     // not the validator's own response shape. This never parses the value pools
@@ -88,6 +88,56 @@ pub(crate) async fn adopt_network(
             })?;
             info!(?heights, "Adopted activation heights from the validator");
             Ok(heights.to_regtest_network())
+        }
+        zaino_common::Network::CustomTestnet {
+            genesis_hash,
+            activation_heights,
+        } => {
+            let fail = |reason: String| {
+                BlockchainSourceError::Unrecoverable(format!(
+                    "custom testnet identity check failed at {}: {reason}",
+                    common.validator_rpc_address
+                ))
+            };
+            let genesis = source
+                .get_block(zaino_primitives::types::Height::GENESIS)
+                .await
+                .map_err(|error| fail(error.to_string()))?;
+            if genesis.header.hash.to_string() != genesis_hash.to_string() {
+                return Err(fail(
+                    "validator genesis does not match configured genesis".to_string(),
+                ));
+            }
+            let actual = activation_heights_from_upgrades(upgrades).map_err(&fail)?;
+            let mut expected = activation_heights;
+            // BeforeOverwinter has no consensus branch ID in the RPC report.
+            expected.before_overwinter = None;
+            if actual != expected {
+                return Err(fail(
+                    "validator upgrade schedule does not match configured schedule".to_string(),
+                ));
+            }
+            let network = zebra_chain::parameters::testnet::Parameters::build()
+                .with_network_name("PrivacyTestnet")
+                .map_err(|error| fail(error.to_string()))?
+                .with_genesis_hash(genesis_hash)
+                .map_err(|error| fail(error.to_string()))?
+                .with_activation_heights(activation_heights.into())
+                .map_err(|error| fail(error.to_string()))?
+                .clear_funding_streams()
+                .with_checkpoints(false)
+                .map_err(|error| fail(error.to_string()))?
+                .to_network()
+                .map_err(|error| fail(error.to_string()))?;
+            if network.genesis_hash()
+                == zebra_chain::parameters::Network::new_default_testnet().genesis_hash()
+            {
+                return Err(fail(
+                    "CustomTestnet must not use the public testnet genesis".to_string(),
+                ));
+            }
+            info!(%genesis_hash, "Verified custom testnet genesis and activation schedule");
+            Ok(network)
         }
     }
 }

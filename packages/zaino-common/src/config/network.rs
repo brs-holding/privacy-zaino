@@ -5,13 +5,13 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use zebra_chain::parameters::testnet::ConfiguredActivationHeights;
 
-/// The network *kind* zaino is configured for. Deliberately payload-free:
-/// activation heights are chain facts the validator owns, so a config value
-/// cannot carry them — the backends adopt the runtime schedule from the
+/// The network kind Zaino is configured for. Activation heights are chain
+/// facts the validator owns; the backends adopt the runtime schedule from the
 /// validator's `getblockchaininfo.upgrades` at spawn and hold it as a
 /// `zebra_chain::parameters::Network`
 /// (<https://github.com/zingolabs/zaino/issues/1076>). A pre-adoption
-/// height read is unrepresentable: this type has no heights to read.
+/// height read is unrepresentable. A custom testnet additionally pins the
+/// expected genesis and schedule, which must agree with the validator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum Network {
     /// Mainnet network
@@ -24,6 +24,33 @@ pub enum Network {
     PubTestnet,
     /// Regtest network (for local testing)
     Regtest,
+    /// An isolated PoW testnet using standard testnet address encodings.
+    /// These expected chain facts are checked before the index is opened.
+    CustomTestnet {
+        /// Expected height-zero block hash, not the public testnet genesis.
+        #[serde(
+            serialize_with = "serialize_genesis_hash",
+            deserialize_with = "deserialize_genesis_hash"
+        )]
+        genesis_hash: zebra_chain::block::Hash,
+        /// Exact expected upgrade schedule; absent upgrades stay disabled.
+        activation_heights: ActivationHeights,
+    },
+}
+
+fn serialize_genesis_hash<S: serde::Serializer>(
+    hash: &zebra_chain::block::Hash,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(hash)
+}
+
+fn deserialize_genesis_hash<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<zebra_chain::block::Hash, D::Error> {
+    String::deserialize(deserializer)?
+        .parse()
+        .map_err(serde::de::Error::custom)
 }
 
 impl fmt::Display for Network {
@@ -32,6 +59,7 @@ impl fmt::Display for Network {
             Network::Mainnet => write!(f, "Mainnet"),
             Network::PubTestnet => write!(f, "PubTestnet"),
             Network::Regtest => write!(f, "Regtest"),
+            Network::CustomTestnet { .. } => write!(f, "PrivacyTestnet"),
         }
     }
 }
@@ -182,7 +210,7 @@ impl Network {
             // Real networks - don't try to sync the whole chain
             Network::Mainnet | Network::PubTestnet => false,
             // Local network - safe and fast to sync
-            Network::Regtest => true,
+            Network::Regtest | Network::CustomTestnet { .. } => true,
         }
     }
 }
