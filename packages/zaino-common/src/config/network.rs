@@ -323,10 +323,12 @@ mod tests {
             Network::Regtest.lightwallet_chain_name(),
             custom_testnet().lightwallet_chain_name(),
         ];
-        let mut unique = labels;
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(unique.len(), labels.len(), "labels collide: {labels:?}");
+        let mut sorted = labels;
+        sorted.sort_unstable();
+        assert!(
+            sorted.windows(2).all(|pair| pair[0] != pair[1]),
+            "two network kinds report the same label: {labels:?}"
+        );
     }
 
     /// The display name doubles as the `network_name` of the zebra parameters
