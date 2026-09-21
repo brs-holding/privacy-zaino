@@ -20,6 +20,12 @@ NU6 = 1
 "NU6.3" = 1
 ```
 
-The chain name exposed to light wallets is `privacy-testnet`. Clients must explicitly support this identity and pin the same genesis. The example identifies an engineering test chain, whose parameters remain subject to review before any public launch.
+The genesis hash above is an example. Use the one published for the network you are indexing; the value shown belongs to an earlier engineering chain and is kept only so the syntax is concrete.
+
+The chain name exposed to light wallets is **`swarm-testnet`**, and the profile's display name — also the `network_name` of the zebra parameters built for it — is **`SwarmTestnet`**. Both live in one place, `CUSTOM_TESTNET_CHAIN_NAME` and `CUSTOM_TESTNET_DISPLAY_NAME` in `config::network`. Clients must explicitly support this identity and pin the same genesis: a wallet built for `swarm-testnet` will refuse an indexer reporting anything else, which is the intended behaviour when it has been pointed at the wrong chain. The parameters of that chain remain subject to review before any public launch.
 
 Existing `Mainnet`, `PubTestnet` (alias `Testnet`) and `Regtest` string configurations retain their meaning. Regtest lightwallet information reports `regtest`, preserving the distinction from Zebra's shared `test` RPC label.
+
+## Changing the label
+
+`Network::lightwallet_chain_name` owns the one string per network kind that `GetLightdInfo.chain_name` reports. It is a published interface: changing the `CustomTestnet` value re-identifies the chain to every wallet in the field, so it changes only alongside a new genesis. The unit tests in `config/network.rs` pin each label and assert that no two kinds share one.

@@ -10,6 +10,8 @@ and this library adheres to Rust's notion of
 ### Added
 - Custom testnet startup checks against the validator's genesis and upgrade schedule.
 ### Changed
+- The custom testnet adopts zebra parameters named `SwarmTestnet` and reports `swarm-testnet` to light wallets. The genesis and schedule verification is unchanged.
+- `GetLightdInfo.chain_name` comes from `Network::lightwallet_chain_name` instead of an inline match.
 ### Deprecated
 ### Removed
 ### Fixed

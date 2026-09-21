@@ -118,7 +118,7 @@ pub(crate) async fn adopt_network(
                 ));
             }
             let network = zebra_chain::parameters::testnet::Parameters::build()
-                .with_network_name("PrivacyTestnet")
+                .with_network_name(zaino_common::CUSTOM_TESTNET_DISPLAY_NAME)
                 .map_err(|error| fail(error.to_string()))?
                 .with_genesis_hash(genesis_hash)
                 .map_err(|error| fail(error.to_string()))?

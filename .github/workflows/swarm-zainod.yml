@@ -1,0 +1,164 @@
+# SWARM workstream F: the `zainod` binary the SwarmTestnet server stack runs.
+#
+# Builds the indexer for x86_64 Linux in release mode with `--locked`, runs the
+# tests that cover the custom-testnet identity (its genesis and activation
+# schedule checks, and the `swarm-testnet` label light wallets pin), and
+# publishes the binary with a `SHA256SUMS` beside it.
+#
+# Nothing is released or pushed to a registry: the artifact is downloaded with
+# `gh run download`, checked against `SHA256SUMS`, and copied to the server.
+#
+# This is a separate workflow from the repository's own `ci.yml`, which runs its
+# build and test jobs on self-hosted runners that this fork does not have.
+name: SWARM zainod binary
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - swarm-testnet-support
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # The stack runs on Ubuntu 24.04; building on 22.04 keeps the glibc floor
+  # below it, so the same binary also runs on older distributions.
+  TARGET: x86_64-unknown-linux-gnu
+  # The packages this branch touches. Tests and clippy are scoped to them: the
+  # rest of the workspace is unchanged from the base branch and is covered by
+  # the repository's own CI.
+  SWARM_PACKAGES: -p zaino-common -p zaino-state -p zainod
+
+jobs:
+  build:
+    name: zainod x86_64-unknown-linux-gnu
+    runs-on: ubuntu-22.04
+    # A cold release build of the workspace (RocksDB, the zcash proof crates
+    # and tonic/prost codegen) is slow; warm runs finish in minutes.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 -qq update
+          sudo apt-get -o Acquire::Retries=3 -qq install -y --no-install-recommends \
+            clang libclang-dev cmake make pkg-config protobuf-compiler
+
+      # The toolchain version comes from rust-toolchain.toml. rustflags is
+      # emptied on purpose: the action otherwise defaults to `-D warnings` for
+      # every build, and clippy below is the place that enforces that.
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          cache: false
+          rustflags: ""
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: swarm-zainod-x86_64-unknown-linux-gnu
+          cache-on-failure: true
+
+      - name: Show toolchain
+        run: |
+          set -euo pipefail
+          rustc -Vv
+          cargo -V
+          protoc --version
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked ${SWARM_PACKAGES} --lib --bins --tests -- -D warnings
+
+      # Scoped to the identity this branch defines. `zaino-common` holds the
+      # label and display name and their collision test; `network_adoption`
+      # holds the genesis-and-schedule verification, which this branch leaves
+      # unchanged and must keep passing; `zainod::config` parses the
+      # `[network.CustomTestnet]` block the server mounts.
+      - name: Test the custom-testnet identity
+        run: |
+          set -euo pipefail
+          cargo test --locked -p zaino-common
+          cargo test --locked -p zaino-state --lib chain_index::network_adoption
+          cargo test --locked -p zainod --lib config::
+
+      - name: Build zainod
+        run: cargo build --locked --release --package zainod --bin zainod
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          bin="target/release/zainod"
+          "${bin}" --version
+          "${bin}" --help > /dev/null
+          # The renamed label must be in the shipped binary, not only in the
+          # tests: this is the string light wallets compare against.
+          if ! grep -aq -- 'swarm-testnet' "${bin}"; then
+            echo "::error::the built binary does not contain the swarm-testnet chain label"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="zainod"))')"
+          stage="swarm-zainod-v${version}-${TARGET}"
+          mkdir -p "dist/${stage}"
+          cp target/release/zainod "dist/${stage}/zainod"
+          cp LICENSE README.md "dist/${stage}/"
+
+          rustc_vv="$(rustc -Vv | sed ':a;N;$!ba;s/\n/\\n/g')"
+          zainod_version="$(target/release/zainod --version | tr -d '\r')"
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          printf '%s\n' \
+            '{' \
+            "  \"artifact\": \"${stage}.tar.gz\"," \
+            "  \"binary\": \"zainod\"," \
+            "  \"zainod_version\": \"${zainod_version}\"," \
+            "  \"lightwallet_chain_name\": \"swarm-testnet\"," \
+            "  \"network_display_name\": \"SwarmTestnet\"," \
+            "  \"git_commit\": \"${GITHUB_SHA}\"," \
+            "  \"git_ref\": \"${GITHUB_REF}\"," \
+            "  \"repository\": \"${GITHUB_REPOSITORY}\"," \
+            "  \"target\": \"${TARGET}\"," \
+            "  \"cargo_command\": \"cargo build --locked --release --package zainod --bin zainod\"," \
+            "  \"cargo_features\": \"default\"," \
+            "  \"rustc_version\": \"${rustc_vv}\"," \
+            "  \"runner_os\": \"${RUNNER_OS}\"," \
+            "  \"runner_arch\": \"${RUNNER_ARCH}\"," \
+            "  \"runner_image\": \"${ImageOS:-unknown}/${ImageVersion:-unknown}\"," \
+            "  \"workflow_run\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"," \
+            "  \"built_at_utc\": \"${built_at}\"" \
+            '}' > "dist/${stage}/build-manifest.json"
+          cat "dist/${stage}/build-manifest.json"
+
+          # The archive holds its files at the root, with no wrapping
+          # directory, so unpacking always yields a flat folder.
+          cd dist
+          tar -czf "${stage}.tar.gz" -C "${stage}" \
+            zainod LICENSE README.md build-manifest.json
+          rm -rf "${stage}"
+          sha256sum "${stage}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: swarm-zainod-x86_64-unknown-linux-gnu
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30

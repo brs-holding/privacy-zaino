@@ -9,7 +9,9 @@ and this library adheres to Rust's notion of
 
 ### Added
 - Explicit CustomTestnet identity with expected genesis hash and upgrade schedule.
+- `Network::lightwallet_chain_name`, the single owner of the `GetLightdInfo` chain label for each network kind, with `CUSTOM_TESTNET_CHAIN_NAME` and `CUSTOM_TESTNET_DISPLAY_NAME`.
 ### Changed
+- The custom testnet is named `SwarmTestnet` and reports `swarm-testnet` to light wallets (was `PrivacyTestnet` / `privacy-testnet`).
 ### Deprecated
 ### Removed
 ### Fixed

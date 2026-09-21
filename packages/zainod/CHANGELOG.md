@@ -9,6 +9,7 @@ and this crate adheres to Rust's notion of
 ## [Unreleased]
 
 ### Added
+- Config test covering the documented `[network.CustomTestnet]` block, its activation schedule and the `swarm-testnet` light-wallet label.
 ### Changed
 ### Deprecated
 ### Removed

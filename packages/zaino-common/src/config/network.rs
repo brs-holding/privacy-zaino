@@ -53,13 +53,23 @@ fn deserialize_genesis_hash<'de, D: serde::Deserializer<'de>>(
         .map_err(serde::de::Error::custom)
 }
 
+/// The display name of the project's custom testnet, also used as the
+/// `network_name` of the zebra `Parameters` built for it. Alphanumeric and
+/// within zebra's network-name bound, as `with_network_name` requires.
+pub const CUSTOM_TESTNET_DISPLAY_NAME: &str = "SwarmTestnet";
+
+/// The chain label light wallets receive for the project's custom testnet in
+/// `GetLightdInfo.chain_name`. Clients pin this string, so it is a public
+/// interface: changing it re-identifies the chain to every wallet.
+pub const CUSTOM_TESTNET_CHAIN_NAME: &str = "swarm-testnet";
+
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Network::Mainnet => write!(f, "Mainnet"),
             Network::PubTestnet => write!(f, "PubTestnet"),
             Network::Regtest => write!(f, "Regtest"),
-            Network::CustomTestnet { .. } => write!(f, "PrivacyTestnet"),
+            Network::CustomTestnet { .. } => write!(f, "{CUSTOM_TESTNET_DISPLAY_NAME}"),
         }
     }
 }
@@ -213,6 +223,24 @@ impl Network {
             Network::Regtest | Network::CustomTestnet { .. } => true,
         }
     }
+
+    /// The `chain_name` this network reports to light wallets in
+    /// `GetLightdInfo`.
+    ///
+    /// Not the validator's own RPC label: zebra answers `test` for both the
+    /// public testnet and regtest, and answers `test` for a configured testnet
+    /// too, so a client reading the validator's string cannot tell which chain
+    /// it is talking to. The configured kind is the only thing that can, and
+    /// clients select address prefixes and the upgrade schedule from it, so
+    /// each kind owns one stable string here.
+    pub fn lightwallet_chain_name(&self) -> &'static str {
+        match self {
+            Network::Mainnet => "main",
+            Network::PubTestnet => "test",
+            Network::Regtest => "regtest",
+            Network::CustomTestnet { .. } => CUSTOM_TESTNET_CHAIN_NAME,
+        }
+    }
 }
 
 impl From<zebra_chain::parameters::Network> for Network {
@@ -246,7 +274,72 @@ impl ActivationHeights {
 
 #[cfg(test)]
 mod tests {
-    use super::ActivationHeights;
+    use super::{
+        ActivationHeights, Network, CUSTOM_TESTNET_CHAIN_NAME, CUSTOM_TESTNET_DISPLAY_NAME,
+    };
+
+    /// The project's custom testnet, with a genesis that is deliberately not
+    /// the public testnet's. Only the discriminant matters to the label.
+    fn custom_testnet() -> Network {
+        Network::CustomTestnet {
+            genesis_hash: "01d6e85dd3c1c128941a849c5025cd2e437258811a2551b82aefd68686c982e1"
+                .parse()
+                .expect("a 32-byte hex block hash"),
+            activation_heights: ActivationHeights {
+                nu6_3: Some(1),
+                nu7: None,
+                ..ActivationHeights::default()
+            },
+        }
+    }
+
+    /// The string light wallets pin for this chain. A wallet compiled for
+    /// `swarm-testnet` refuses any other label, so this is the network's
+    /// public identity, not a cosmetic name.
+    #[test]
+    fn custom_testnet_reports_the_swarm_chain_name() {
+        assert_eq!(custom_testnet().lightwallet_chain_name(), "swarm-testnet");
+        assert_eq!(CUSTOM_TESTNET_CHAIN_NAME, "swarm-testnet");
+    }
+
+    /// The upstream kinds keep the labels lightwalletd has always sent, so
+    /// renaming the custom testnet cannot have moved one of them.
+    #[test]
+    fn upstream_networks_keep_their_lightwallet_chain_names() {
+        assert_eq!(Network::Mainnet.lightwallet_chain_name(), "main");
+        assert_eq!(Network::PubTestnet.lightwallet_chain_name(), "test");
+        assert_eq!(Network::Regtest.lightwallet_chain_name(), "regtest");
+    }
+
+    /// The bug this mapping exists to prevent: zebra answers `test` for the
+    /// public testnet, for regtest and for a configured testnet alike, so two
+    /// kinds sharing a label would leave a wallet unable to tell which chain
+    /// it reached.
+    #[test]
+    fn every_network_kind_has_a_distinct_lightwallet_chain_name() {
+        let labels = [
+            Network::Mainnet.lightwallet_chain_name(),
+            Network::PubTestnet.lightwallet_chain_name(),
+            Network::Regtest.lightwallet_chain_name(),
+            custom_testnet().lightwallet_chain_name(),
+        ];
+        let mut unique = labels;
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), labels.len(), "labels collide: {labels:?}");
+    }
+
+    /// The display name doubles as the `network_name` of the zebra parameters
+    /// built during adoption, and zebra rejects reserved names, over-long names
+    /// and anything outside `[A-Za-z0-9_]`. Checking it here fails at unit-test
+    /// speed instead of at indexer startup.
+    #[test]
+    fn custom_testnet_display_name_is_accepted_by_zebra() {
+        assert_eq!(custom_testnet().to_string(), CUSTOM_TESTNET_DISPLAY_NAME);
+        zebra_chain::parameters::testnet::Parameters::build()
+            .with_network_name(CUSTOM_TESTNET_DISPLAY_NAME)
+            .expect("zebra must accept the custom testnet display name");
+    }
 
     #[test]
     fn activation_heights_round_trip_nu6_2() {

@@ -734,6 +734,66 @@ listen_address = "127.0.0.1:8137"
         );
     }
 
+    /// The `[network.CustomTestnet]` block exactly as `zaino-common/usage.md`
+    /// documents it, and as the deployed `zainod.toml` is rendered: the
+    /// genesis and every upgrade height are config, so a wrong or dropped
+    /// field must show up here rather than at indexer startup on a server.
+    #[test]
+    fn documented_custom_testnet_block_parses_and_reports_the_swarm_chain_name() {
+        let _guard = EnvGuard::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        let toml_content = r#"
+backend = "rpc"
+
+[network.CustomTestnet]
+genesis_hash = "01d6e85dd3c1c128941a849c5025cd2e437258811a2551b82aefd68686c982e1"
+
+[network.CustomTestnet.activation_heights]
+BeforeOverwinter = 1
+Overwinter = 1
+Sapling = 1
+Blossom = 1
+Heartwood = 1
+Canopy = 1
+NU5 = 1
+NU6 = 1
+"NU6.1" = 1
+"NU6.2" = 1
+"NU6.3" = 1
+
+[validator_settings]
+validator_jsonrpc_listen_address = "127.0.0.1:18232"
+
+[grpc_settings]
+listen_address = "127.0.0.1:8137"
+"#;
+
+        let config_path = create_test_config_file(&temp_dir, toml_content, "custom_testnet.toml");
+        let config = load_config(&config_path).expect("the documented custom testnet block loads");
+
+        let Network::CustomTestnet {
+            genesis_hash,
+            activation_heights,
+        } = config.network
+        else {
+            panic!("expected a CustomTestnet profile, got {:?}", config.network);
+        };
+        assert_eq!(
+            genesis_hash.to_string(),
+            "01d6e85dd3c1c128941a849c5025cd2e437258811a2551b82aefd68686c982e1"
+        );
+        // Every documented upgrade is carried through; NU7 stays unset, and an
+        // unset upgrade means never-activated rather than "use a default".
+        assert_eq!(activation_heights.before_overwinter, Some(1));
+        assert_eq!(activation_heights.nu6_3, Some(1));
+        assert_eq!(activation_heights.nu7, None);
+
+        // The identity light wallets pin.
+        assert_eq!(config.network.lightwallet_chain_name(), "swarm-testnet");
+        assert_eq!(config.network.to_string(), "SwarmTestnet");
+    }
+
     /// The pre-rename config spelling of The Public Testnet still parses,
     /// via the `#[serde(alias = "Testnet")]` on `Network::PubTestnet`.
     #[test]
