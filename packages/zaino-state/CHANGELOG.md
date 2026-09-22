@@ -16,6 +16,7 @@ and this library adheres to Rust's notion of
 ### Removed
 ### Fixed
 - Lightwallet clients receive the configured Regtest chain name when Zebra RPC reports `test`.
+- Cherry-picked upstream #1584 (closing #1551): the chain-head service walks reorgs iteratively instead of recursing once per block, which aborted the process with a stack overflow on a tokio worker past roughly 150 blocks of depth. This crashed the SwarmTestnet indexer in production on 2026-09-22.
 
 ## [0.9.0] - 2026-09-11
 
