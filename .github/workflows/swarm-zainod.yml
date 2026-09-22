@@ -35,7 +35,7 @@ env:
   # The packages this branch touches. Tests and clippy are scoped to them: the
   # rest of the workspace is unchanged from the base branch and is covered by
   # the repository's own CI.
-  SWARM_PACKAGES: -p zaino-common -p zaino-state -p zainod
+  SWARM_PACKAGES: -p zaino-common -p zaino-state -p zainod -p zaino-chain-head-service
 
 jobs:
   build:
@@ -94,6 +94,18 @@ jobs:
           cargo test --locked -p zaino-common
           cargo test --locked -p zaino-state --lib chain_index::network_adoption
           cargo test --locked -p zainod --lib config::
+
+      # The cherry-picked fix for the crash this deployment hit in production
+      # (upstream zaino#1551 / #1584, server defect S-1). RUST_MIN_STACK is
+      # pinned to a tokio worker's 2 MiB on purpose: the test runner's default
+      # stack is far larger, and on a large stack the recursive walk this
+      # replaced survives deep enough to pass. Upstream ran it the same way.
+      # `a_deep_fork_inside_the_window_is_resolved` walks a 200-block-deep fork,
+      # well past the ~150 levels that aborted the indexer on the server.
+      - name: Test the bounded reorg walk on a worker-sized stack
+        env:
+          RUST_MIN_STACK: 2097152
+        run: cargo test --locked -p zaino-chain-head-service reorg_depth -- --nocapture
 
       - name: Build zainod
         run: cargo build --locked --release --package zainod --bin zainod
