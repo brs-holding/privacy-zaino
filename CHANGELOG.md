@@ -7,6 +7,11 @@ and this library adheres to Rust's notion of
 
 ## Unreleased
 
+### Changed
+
+- SWARM builds accept both SWARM and legacy testnet unified address encodings
+  and return the SWARM encoding when an RPC canonicalizes an address.
+
 ### Added
 - **`zaino-bench`** — a benchmark harness answering three operational questions
   against a running zainod, from the outside, over the interfaces a real client

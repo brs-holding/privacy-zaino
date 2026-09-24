@@ -88,6 +88,9 @@ jobs:
       # holds the genesis-and-schedule verification, which this branch leaves
       # unchanged and must keep passing; `zainod::config` parses the
       # `[network.CustomTestnet]` block the server mounts.
+      - name: Test SWARM and legacy address classification
+        run: cargo test --locked -p zaino-address
+
       - name: Test the custom-testnet identity
         run: |
           set -euo pipefail

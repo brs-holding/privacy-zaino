@@ -111,6 +111,25 @@ mod tests {
     const REGTEST: Net = Net(NetworkType::Regtest);
     const MAIN: Net = Net(NetworkType::Main);
 
+    #[test]
+    fn swarm_and_legacy_unified_addresses_classify_identically() {
+        const LEGACY: &str = "utest10a8k6aw5w33kvyt7x6fryzu7vvsjru5vgcfnvr288qx2zm6p63ygcajtaze0px08t583dyrgr42vasazjhhnntus2tqrpkzu0dm2l4cgf3ld6wdqdrf3jv8mvfx9c80e73syer9l2wlgawjtf7yvj0eqwdf354trtelxnr0fhpw9792eaf49ghstkyftc9lwqqwy4ye0cleagp4nzyt";
+        let parsed: zcash_address::ZcashAddress = LEGACY
+            .parse()
+            .expect("the published legacy vector is valid");
+        let canonical = parsed.to_string();
+        assert!(canonical.starts_with("swarm1"));
+        let expected = ZValidatedAddress::Unified {
+            address: canonical.clone(),
+        };
+        assert_eq!(z_validate_address(LEGACY.into(), &TEST), expected);
+        assert_eq!(z_validate_address(canonical.clone(), &TEST), expected);
+        assert_eq!(
+            z_validate_address(canonical, &MAIN),
+            ZValidatedAddress::Invalid
+        );
+    }
+
     // Canonical source: zaino-serve wire::address::tests::served_vectors
     // Tracked for DRY consolidation: https://github.com/zingolabs/zaino/issues/988
     const TESTNET_P2PKH: &str = "tmVqEASZxBNKFTbmASZikGa5fPLkd68iJyx";

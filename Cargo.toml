@@ -1,5 +1,6 @@
 # Workspace Members are in dependency order, do not change this without prior consideration.
 [workspace]
+exclude = ["vendor/zcash_address", "vendor/zcash_protocol"]
 members = [
     "packages/zaino-status",
     "packages/zaino-consensus",
@@ -232,3 +233,7 @@ arc-swap = "1.7.1"
 [profile.test]
 opt-level = 3
 debug = true
+
+[patch.crates-io]
+zcash_address = { path = "vendor/zcash_address" }
+zcash_protocol = { path = "vendor/zcash_protocol" }

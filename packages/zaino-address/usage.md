@@ -29,6 +29,10 @@ let result = validate_address(address_string, network);
 let result = z_validate_address(address_string, network);
 ```
 
+SWARM builds accept both `swarm1` and legacy `utest1` unified addresses for the
+test network. The unified classification returns the canonical SWARM encoding.
+Mainnet and regtest encodings keep their existing network checks.
+
 Both return domain types (`ValidatedAddress`, `ZValidatedAddress`) with **no
 serde**. The legacy-shaped JSON — including the exact field sets, which differ
 per address kind — is `zaino-serve`'s `wire/address.rs`, per ADR-0009.

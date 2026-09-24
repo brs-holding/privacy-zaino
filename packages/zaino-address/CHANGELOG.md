@@ -9,6 +9,8 @@ and this library adheres to Rust's notion of
 
 ### Added
 ### Changed
+- SWARM builds accept `swarm1` and legacy `utest1` unified addresses, with
+  identical receiver payloads and canonical SWARM output.
 ### Deprecated
 ### Removed
 ### Fixed
