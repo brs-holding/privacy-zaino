@@ -2132,6 +2132,17 @@ impl<Source: BlockchainSource + WithChainHeadSource + WithChainStoreSource> Ligh
             upgrade_name: latest_upgrade.name.clone(),
             upgrade_height: u64::from(u32::from(latest_upgrade.activation_height)),
             lightwallet_protocol_version: "v0.5.0".to_string(),
+            // The chain's identity, which `chain_name` above only labels: two
+            // chains built from the same software answer the same label, so a
+            // wallet that trusted the label alone would sync a production
+            // wallet against a rehearsal chain and write its state back.
+            //
+            // `Display` for a zebra block hash is display-order lowercase hex —
+            // the spelling `getblockhash 0` prints, and the spelling a wallet
+            // holds. Regtest pins no genesis and sends the empty string, which
+            // is also what an older server sends, so a client reads "" as "this
+            // server did not say".
+            genesis_hash: self.config.network.reported_genesis_hex(),
         })
     }
 

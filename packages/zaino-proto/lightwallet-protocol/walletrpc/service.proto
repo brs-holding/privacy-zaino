@@ -116,6 +116,25 @@ message LightdInfo {
     string upgradeName = 16;            // name of next pending network upgrade, empty if none scheduled
     uint64 upgradeHeight = 17;          // height of next pending upgrade, zero if none is scheduled
     string lightwalletProtocolVersion = 18; // version of https://github.com/zcash/lightwallet-protocol served by this server
+
+    // SWARM addition, not upstream. The height-zero block hash of the chain
+    // this server indexes, as 64 lowercase hexadecimal characters in display
+    // order — the spelling `getblockhash 0` prints. Empty when the server pins
+    // no genesis (regtest, whose genesis is whatever the local validator made).
+    //
+    // chainName above names a chain but cannot prove it: two chains built from
+    // the same software answer the same label, so a wallet that trusted the
+    // label alone would sync a production wallet against a rehearsal chain and
+    // write its state back. The genesis is the chain's identity, so a client
+    // can compare the hash it was built for against the hash the server serves,
+    // and refuse before syncing.
+    //
+    // Field 19 is appended, never inserted: every field above keeps its number
+    // and its wire type, so an older client parses this message exactly as it
+    // did before and skips 19 as an unknown field, and an older server sends
+    // nothing for it, which decodes as the empty string. A client must
+    // therefore read "" as "this server did not say", never as "no genesis".
+    string genesisHash = 19;
 }
 
 // TransparentAddressBlockFilter restricts the results of the GRPC methods that

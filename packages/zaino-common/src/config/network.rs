@@ -308,6 +308,57 @@ impl Network {
             | Network::SwarmMain { genesis_hash, .. } => Some(*genesis_hash),
         }
     }
+
+    /// The genesis hash this kind reports to light wallets in
+    /// `GetLightdInfo.genesis_hash`, as 64 lowercase hexadecimal characters in
+    /// display order.
+    ///
+    /// Not the same question as [`Network::expected_genesis_hash`], which is
+    /// "what did the operator pin for this store to be checked against". This
+    /// one is "what chain is this server serving", and the two upstream chains
+    /// answer it from compiled zebra parameters rather than from configuration.
+    ///
+    /// `chain_name` alone cannot answer it: two chains built from the same
+    /// software report the same label, so a wallet that trusted the label would
+    /// sync against a rehearsal chain and write its state back. The genesis is
+    /// the chain's identity.
+    ///
+    /// `None` only for regtest, whose genesis is whatever the local validator
+    /// made and which this kind therefore cannot state without asking it. The
+    /// caller sends the empty string for `None`, which is what an older server
+    /// sends too, so a client must read `""` as "this server did not say".
+    pub fn reported_genesis_hash(&self) -> Option<zebra_chain::block::Hash> {
+        match self {
+            // Zcash Mainnet and the public testnet are fixed chains. Their
+            // hashes are read out of zebra rather than written again here, so
+            // there is one copy of each in the build and no chance of a
+            // transposed character making this server claim to be a chain it is
+            // not.
+            Network::Mainnet => Some(zebra_chain::parameters::Network::Mainnet.genesis_hash()),
+            Network::PubTestnet => Some(
+                zebra_chain::parameters::Network::new_default_testnet().genesis_hash(),
+            ),
+            Network::Regtest => None,
+            // The two SWARM chains carry theirs in the configuration, already
+            // checked against the validator before the index was opened, so
+            // reporting it cannot disagree with what the store holds.
+            Network::CustomTestnet { genesis_hash, .. }
+            | Network::SwarmMain { genesis_hash, .. } => Some(*genesis_hash),
+        }
+    }
+
+    /// [`Network::reported_genesis_hash`] spelled for the wire: 64 lowercase
+    /// hexadecimal characters in display order, or the empty string for a kind
+    /// that pins no genesis.
+    ///
+    /// This is the whole of what `GetLightdInfo.genesis_hash` carries, kept here
+    /// rather than at the call site so that the exact string a wallet compares
+    /// against is the string the tests in this module assert.
+    pub fn reported_genesis_hex(&self) -> String {
+        self.reported_genesis_hash()
+            .map(|hash| hash.to_string())
+            .unwrap_or_default()
+    }
 }
 
 impl From<zebra_chain::parameters::Network> for Network {
@@ -396,6 +447,143 @@ mod tests {
             sorted.windows(2).all(|pair| pair[0] != pair[1]),
             "two network kinds report the same label: {labels:?}"
         );
+    }
+
+    /// The SWARM production network, with a genesis standing in for the one the
+    /// launch ceremony will produce. There is no constant for it, by design.
+    fn swarm_mainnet() -> Network {
+        Network::SwarmMain {
+            genesis_hash: CEREMONY_GENESIS.parse().expect("a 32-byte hex block hash"),
+            activation_heights: ActivationHeights {
+                nu6_3: Some(1),
+                nu7: None,
+                ..ActivationHeights::default()
+            },
+        }
+    }
+
+    /// A genesis nobody has yet. Written out rather than derived so a reader can
+    /// see that the profile is built from a value and not from a constant.
+    const CEREMONY_GENESIS: &str =
+        "00d4b1cb01d6bd2d1a3a4a49bba6fd0a4c2e2f7c0d6e5b4a39281706f5e4d3c2";
+
+    /// The genesis of SwarmTestnet, as `custom_testnet()` above configures it.
+    const CUSTOM_TESTNET_GENESIS: &str =
+        "01d6e85dd3c1c128941a849c5025cd2e437258811a2551b82aefd68686c982e1";
+
+    /// Each SWARM chain reports the genesis it was configured with, not a
+    /// compiled-in one. This is the field a wallet compares before syncing, so
+    /// reporting a different chain's hash here is reporting a different chain.
+    #[test]
+    fn the_swarm_chains_report_the_genesis_they_were_configured_with() {
+        assert_eq!(
+            custom_testnet().reported_genesis_hex(),
+            CUSTOM_TESTNET_GENESIS,
+        );
+        assert_eq!(swarm_mainnet().reported_genesis_hex(), CEREMONY_GENESIS);
+        // A second ceremony is a second chain, and the report follows it rather
+        // than any value fixed at build time.
+        let other = Network::SwarmMain {
+            genesis_hash: "ab".repeat(32).parse().expect("a 32-byte hex block hash"),
+            activation_heights: ActivationHeights::default(),
+        };
+        assert_eq!(other.reported_genesis_hex(), "ab".repeat(32));
+        assert_ne!(other.reported_genesis_hex(), swarm_mainnet().reported_genesis_hex());
+    }
+
+    /// The two fixed upstream chains report their published genesis, read out of
+    /// zebra rather than written again here. The literals below are what
+    /// `zcash-cli getblockhash 0` prints on each chain.
+    #[test]
+    fn the_upstream_chains_report_their_published_genesis() {
+        assert_eq!(
+            Network::Mainnet.reported_genesis_hex(),
+            "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+        );
+        assert_eq!(
+            Network::PubTestnet.reported_genesis_hex(),
+            "05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38",
+        );
+    }
+
+    /// Regtest's genesis is whatever the local validator made, so this kind
+    /// cannot state it and says nothing instead. The empty string is also what
+    /// an older server sends, and a client must read it as "not stated" rather
+    /// than as a hash that failed to match.
+    #[test]
+    fn regtest_states_no_genesis() {
+        assert_eq!(Network::Regtest.reported_genesis_hash(), None);
+        assert_eq!(Network::Regtest.reported_genesis_hex(), "");
+    }
+
+    /// Every stated genesis is the 64 lowercase hexadecimal characters of a
+    /// block hash in display order — the spelling a node prints and a wallet
+    /// holds. An upper-case or byte-reversed rendering would fail every
+    /// comparison a client makes, while looking right in a log.
+    #[test]
+    fn every_stated_genesis_is_display_order_lowercase_hex() {
+        for network in [
+            Network::Mainnet,
+            Network::PubTestnet,
+            custom_testnet(),
+            swarm_mainnet(),
+        ] {
+            let stated = network.reported_genesis_hex();
+            assert_eq!(stated.len(), 64, "{network} stated {stated}");
+            assert!(
+                stated
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{network} stated {stated}",
+            );
+            // Display order, not internal byte order: parsing the string back
+            // must give the hash the kind reports.
+            assert_eq!(
+                stated.parse::<zebra_chain::block::Hash>().ok(),
+                network.reported_genesis_hash(),
+            );
+        }
+    }
+
+    /// The point of the field: no two chains this build can serve state the same
+    /// genesis, so a wallet that compares it can always tell them apart — which
+    /// `chain_name` alone cannot do once two chains are built from the same
+    /// software.
+    #[test]
+    fn no_two_chains_state_the_same_genesis() {
+        let stated = [
+            Network::Mainnet.reported_genesis_hex(),
+            Network::PubTestnet.reported_genesis_hex(),
+            custom_testnet().reported_genesis_hex(),
+            swarm_mainnet().reported_genesis_hex(),
+        ];
+        let mut sorted = stated.clone();
+        sorted.sort_unstable();
+        assert!(
+            sorted.windows(2).all(|pair| pair[0] != pair[1]),
+            "two chains state the same genesis: {stated:?}",
+        );
+    }
+
+    /// `expected_genesis_hash` answers "what did the operator pin for this store
+    /// to be checked against" and `reported_genesis_hash` answers "what chain is
+    /// this server serving". They agree wherever both have an answer; only the
+    /// upstream chains differ, and there the report comes from zebra.
+    #[test]
+    fn the_pinned_and_the_reported_genesis_agree_where_both_exist() {
+        for network in [custom_testnet(), swarm_mainnet()] {
+            assert_eq!(
+                network.expected_genesis_hash(),
+                network.reported_genesis_hash(),
+                "{network}",
+            );
+        }
+        for network in [Network::Mainnet, Network::PubTestnet] {
+            assert_eq!(network.expected_genesis_hash(), None, "{network}");
+            assert!(network.reported_genesis_hash().is_some(), "{network}");
+        }
+        assert_eq!(Network::Regtest.expected_genesis_hash(), None);
+        assert_eq!(Network::Regtest.reported_genesis_hash(), None);
     }
 
     /// The display name doubles as the `network_name` of the zebra parameters
