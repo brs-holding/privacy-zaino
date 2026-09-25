@@ -335,9 +335,9 @@ impl Network {
             // transposed character making this server claim to be a chain it is
             // not.
             Network::Mainnet => Some(zebra_chain::parameters::Network::Mainnet.genesis_hash()),
-            Network::PubTestnet => Some(
-                zebra_chain::parameters::Network::new_default_testnet().genesis_hash(),
-            ),
+            Network::PubTestnet => {
+                Some(zebra_chain::parameters::Network::new_default_testnet().genesis_hash())
+            }
             Network::Regtest => None,
             // The two SWARM chains carry theirs in the configuration, already
             // checked against the validator before the index was opened, so
@@ -488,7 +488,10 @@ mod tests {
             activation_heights: ActivationHeights::default(),
         };
         assert_eq!(other.reported_genesis_hex(), "ab".repeat(32));
-        assert_ne!(other.reported_genesis_hex(), swarm_mainnet().reported_genesis_hex());
+        assert_ne!(
+            other.reported_genesis_hex(),
+            swarm_mainnet().reported_genesis_hex()
+        );
     }
 
     /// The two fixed upstream chains report their published genesis, read out of
