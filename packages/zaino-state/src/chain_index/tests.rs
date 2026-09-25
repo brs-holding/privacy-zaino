@@ -9,15 +9,20 @@ mod sync_loop;
 pub(crate) mod vectors;
 
 pub(crate) fn init_tracing() {
-    tracing_subscriber::fmt()
+    // Every test calls this from its own setup, but a process has one global
+    // trace dispatcher. `try_init` therefore succeeds for whichever test runs
+    // first and returns `Err(SetGlobalDefaultError)` for every other test, so
+    // unwrapping it panicked in all but the first and failed the whole `--lib`
+    // suite. An already-installed subscriber is the outcome this wants, so
+    // that error is a success too and is discarded.
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .with_timer(tracing_subscriber::fmt::time::UtcTime::rfc_3339())
         .with_target(true)
-        .try_init()
-        .unwrap();
+        .try_init();
 }
 
 use std::path::{Path, PathBuf};
