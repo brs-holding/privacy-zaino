@@ -12,6 +12,11 @@ version = "0.5.2"
 # Zebra
 zebra-chain = { workspace = true }
 
+# The network type an address encoding is read against. A network kind names
+# one; zebra's `Network` cannot, since it has no variant for the SWARM
+# production network.
+zcash_protocol = { workspace = true }
+
 # Serialization
 serde = { workspace = true, features = ["derive"] }
 
@@ -24,3 +29,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "aws_lc_rs",
     "prefer-post-quantum",
 ] }
+
+[dev-dependencies]
+# Parsing an address string, to check which network kind it can reach.
+zcash_address = { workspace = true }

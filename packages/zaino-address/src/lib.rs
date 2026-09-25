@@ -26,10 +26,14 @@
 //!
 //! # Network parameterisation
 //!
-//! Entry points are generic over [`zcash_protocol::consensus::Parameters`]
-//! rather than taking a concrete network type. `zebra_chain::parameters::Network`
-//! implements it, so callers pass theirs directly and this crate needs no
-//! dependency on Zebra.
+//! Entry points take a [`zcash_protocol::consensus::NetworkType`], the network
+//! an address encoding actually belongs to, rather than a
+//! [`Parameters`](zcash_protocol::consensus::Parameters) to read one out of.
+//! `zebra_chain::parameters::Network` implements `Parameters`, but it has two
+//! kinds and answers `Test` for every configured testnet, so a caller serving
+//! the SWARM production network and passing its zebra network would classify
+//! its own addresses as another chain's. The caller names the network type,
+//! and this crate stays free of any dependency on Zebra.
 
 mod classify;
 mod sapling;

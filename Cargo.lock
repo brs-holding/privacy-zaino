@@ -5969,6 +5969,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tree",
+ "zcash_address",
+ "zcash_protocol",
  "zebra-chain",
 ]
 
@@ -6086,6 +6088,7 @@ dependencies = [
  "zaino-source",
  "zaino-state",
  "zaino-status",
+ "zcash_protocol",
  "zebra-chain",
  "zebra-rpc",
 ]
@@ -6331,8 +6334,6 @@ dependencies = [
 [[package]]
 name = "zcash_primitives"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34ca4de11896f704ffe6319c2cd7bc8fc6ab31a55cec80d26def15c009d83678"
 dependencies = [
  "blake2b_simd",
  "block-buffer 0.11.0-rc.3",
@@ -6422,8 +6423,6 @@ dependencies = [
 [[package]]
 name = "zcash_transparent"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "547c012778bae17f58007731af074d638aa146ab0ecfc120adebf23d049aff6c"
 dependencies = [
  "bip32",
  "bs58",
@@ -6447,8 +6446,6 @@ dependencies = [
 [[package]]
 name = "zebra-chain"
 version = "12.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b270bc7ec8f48cf58d14368c3521201947df137fc0e52633e81297250b2e3e0e"
 dependencies = [
  "bech32",
  "bitflags 2.13.0",

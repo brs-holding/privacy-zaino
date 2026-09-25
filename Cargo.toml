@@ -1,6 +1,12 @@
 # Workspace Members are in dependency order, do not change this without prior consideration.
 [workspace]
-exclude = ["vendor/zcash_address", "vendor/zcash_protocol"]
+exclude = [
+    "vendor/zcash_address",
+    "vendor/zcash_primitives",
+    "vendor/zcash_protocol",
+    "vendor/zcash_transparent",
+    "vendor/zebra-chain",
+]
 members = [
     "packages/zaino-status",
     "packages/zaino-consensus",
@@ -237,3 +243,12 @@ debug = true
 [patch.crates-io]
 zcash_address = { path = "vendor/zcash_address" }
 zcash_protocol = { path = "vendor/zcash_protocol" }
+# Vendored so the exhaustive `BranchId` matches in this crate answer for the SWARM
+# production domain; see vendor/README.md.
+zcash_primitives = { path = "vendor/zcash_primitives" }
+# Vendored so the exhaustive `NetworkType` match in its `zip48` module handles
+# `NetworkType::SwarmMain` explicitly; see vendor/README.md.
+zcash_transparent = { path = "vendor/zcash_transparent" }
+# Vendored so the exhaustive `NetworkType` match in its `NetworkKind` conversion
+# answers for the SWARM production network; see vendor/README.md.
+zebra-chain = { path = "vendor/zebra-chain" }

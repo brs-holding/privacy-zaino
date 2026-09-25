@@ -36,6 +36,29 @@ pub enum Network {
         /// Exact expected upgrade schedule; absent upgrades stay disabled.
         activation_heights: ActivationHeights,
     },
+    /// The SWARM production network: a separate chain from Zcash Mainnet, with
+    /// its own address encodings
+    /// ([`zcash_protocol::consensus::NetworkType::SwarmMain`]), its own
+    /// consensus branch domain and its own genesis.
+    ///
+    /// [`Network::Mainnet`] above is Zcash Mainnet and stays that way, so an
+    /// operator cannot reach this chain by writing `Mainnet`.
+    ///
+    /// Both fields are required. There is no default genesis to fall back to:
+    /// the production genesis is generated at the launch ceremony, and an
+    /// indexer that opened a store against the wrong chain would index it as
+    /// this one.
+    SwarmMain {
+        /// Expected height-zero block hash, checked against the validator
+        /// before the index is opened.
+        #[serde(
+            serialize_with = "serialize_genesis_hash",
+            deserialize_with = "deserialize_genesis_hash"
+        )]
+        genesis_hash: zebra_chain::block::Hash,
+        /// Exact expected upgrade schedule; absent upgrades stay disabled.
+        activation_heights: ActivationHeights,
+    },
 }
 
 fn serialize_genesis_hash<S: serde::Serializer>(
@@ -63,6 +86,17 @@ pub const CUSTOM_TESTNET_DISPLAY_NAME: &str = "SwarmTestnet";
 /// interface: changing it re-identifies the chain to every wallet.
 pub const CUSTOM_TESTNET_CHAIN_NAME: &str = "swarm-testnet";
 
+/// The display name of the SWARM production network, also used as the
+/// `network_name` of the zebra `Parameters` built for it. Alphanumeric and
+/// within zebra's network-name bound, as `with_network_name` requires.
+pub const SWARM_MAINNET_DISPLAY_NAME: &str = "SwarmMainnet";
+
+/// The chain label light wallets receive for the SWARM production network in
+/// `GetLightdInfo.chain_name`. Clients pin this string, so it is a public
+/// interface: changing it re-identifies the chain to every wallet. It is not
+/// `main`, which is Zcash Mainnet's label and stays Zcash Mainnet's.
+pub const SWARM_MAINNET_CHAIN_NAME: &str = "swarm-mainnet";
+
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -70,6 +104,7 @@ impl fmt::Display for Network {
             Network::PubTestnet => write!(f, "PubTestnet"),
             Network::Regtest => write!(f, "Regtest"),
             Network::CustomTestnet { .. } => write!(f, "{CUSTOM_TESTNET_DISPLAY_NAME}"),
+            Network::SwarmMain { .. } => write!(f, "{SWARM_MAINNET_DISPLAY_NAME}"),
         }
     }
 }
@@ -218,7 +253,7 @@ impl Network {
     pub fn wait_on_server_sync(&self) -> bool {
         match self {
             // Real networks - don't try to sync the whole chain
-            Network::Mainnet | Network::PubTestnet => false,
+            Network::Mainnet | Network::PubTestnet | Network::SwarmMain { .. } => false,
             // Local network - safe and fast to sync
             Network::Regtest | Network::CustomTestnet { .. } => true,
         }
@@ -239,6 +274,38 @@ impl Network {
             Network::PubTestnet => "test",
             Network::Regtest => "regtest",
             Network::CustomTestnet { .. } => CUSTOM_TESTNET_CHAIN_NAME,
+            Network::SwarmMain { .. } => SWARM_MAINNET_CHAIN_NAME,
+        }
+    }
+
+    /// The network type this kind's addresses are encoded for.
+    ///
+    /// Not derived from the runtime `zebra_chain::parameters::Network`: zebra
+    /// has two kinds, `Mainnet` and `Testnet`, and answers `Test` for every
+    /// configured testnet, so a SWARM production indexer reading its network
+    /// type from zebra would accept SwarmTestnet addresses and refuse its own.
+    /// The configured kind is the only thing that knows.
+    pub fn network_type(&self) -> zcash_protocol::consensus::NetworkType {
+        use zcash_protocol::consensus::NetworkType;
+        match self {
+            Network::Mainnet => NetworkType::Main,
+            // SwarmTestnet uses the standard testnet encodings, with the
+            // project's own unified HRPs inside them.
+            Network::PubTestnet | Network::CustomTestnet { .. } => NetworkType::Test,
+            Network::Regtest => NetworkType::Regtest,
+            Network::SwarmMain { .. } => NetworkType::SwarmMain,
+        }
+    }
+
+    /// The genesis hash this kind pins, for the kinds that pin one.
+    ///
+    /// `None` for the chains whose genesis is a compiled zebra parameter or,
+    /// on regtest, whatever the local validator made.
+    pub fn expected_genesis_hash(&self) -> Option<zebra_chain::block::Hash> {
+        match self {
+            Network::Mainnet | Network::PubTestnet | Network::Regtest => None,
+            Network::CustomTestnet { genesis_hash, .. }
+            | Network::SwarmMain { genesis_hash, .. } => Some(*genesis_hash),
         }
     }
 }
@@ -341,6 +408,64 @@ mod tests {
         zebra_chain::parameters::testnet::Parameters::build()
             .with_network_name(CUSTOM_TESTNET_DISPLAY_NAME)
             .expect("zebra must accept the custom testnet display name");
+    }
+
+    /// Zebra has no network kind for the SWARM production network, so a SWARM
+    /// production address cannot become a zebra address at all. Without this the
+    /// vendored conversion could quietly read `swm1…` as Mainnet.
+    #[test]
+    fn swarm_mainnet_addresses_have_no_zebra_network_kind() {
+        use zcash_protocol::consensus::NetworkType;
+        use zebra_chain::parameters::NetworkKind;
+        use zebra_chain::primitives::{Address, UnsupportedNetworkType};
+
+        assert_eq!(
+            NetworkKind::try_from(NetworkType::SwarmMain),
+            Err(UnsupportedNetworkType(NetworkType::SwarmMain)),
+        );
+        for (network_type, kind) in [
+            (NetworkType::Main, NetworkKind::Mainnet),
+            (NetworkType::Test, NetworkKind::Testnet),
+            (NetworkType::Regtest, NetworkKind::Regtest),
+        ] {
+            assert_eq!(NetworkKind::try_from(network_type), Ok(kind));
+            assert_eq!(NetworkType::from(kind), network_type);
+        }
+
+        // The shared crate parses the SWARM production encodings ...
+        for encoded in [
+            "s1MCkDhVejM4RqDyRR1rEJkudd26FVWipPD",
+            "s3Mtm9Ez6HFNovPfrY7WpjPGZmYNxztrxbb",
+        ] {
+            let parsed: zcash_address::ZcashAddress =
+                encoded.parse().expect("parses in zcash_address");
+            // ... and zebra refuses to convert them into one of its own.
+            assert!(
+                parsed.convert::<Address>().is_err(),
+                "{encoded} must not convert to a zebra address",
+            );
+        }
+    }
+
+    /// The published SwarmTestnet destinations keep converting as testnet addresses.
+    #[test]
+    fn swarm_testnet_destinations_still_convert() {
+        use zebra_chain::parameters::NetworkKind;
+        use zebra_chain::primitives::Address;
+
+        for encoded in [
+            "t2DGVURG5tAyXXSkj85JV5xbvTobYv7H99n",
+            "t2LVPzRYpZ4QtRRmQMS1zWUmG7TZaYcMjBR",
+            "t2UHhsicXnapNJrfewHqgwXef5HDwCHd7wk",
+            "t2Li46A4YNFqRDvdKA212w7DtsLkbGMG2xU",
+        ] {
+            let parsed: zcash_address::ZcashAddress =
+                encoded.parse().expect("parses in zcash_address");
+            let converted = parsed
+                .convert::<Address>()
+                .expect("a SwarmTestnet destination is a testnet address");
+            assert_eq!(converted.network(), NetworkKind::Testnet);
+        }
     }
 
     #[test]

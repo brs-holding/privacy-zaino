@@ -93,53 +93,132 @@ pub(crate) async fn adopt_network(
             genesis_hash,
             activation_heights,
         } => {
-            let fail = |reason: String| {
-                BlockchainSourceError::Unrecoverable(format!(
-                    "custom testnet identity check failed at {}: {reason}",
-                    common.validator_rpc_address
-                ))
-            };
-            let genesis = source
-                .get_block(zaino_primitives::types::Height::GENESIS)
-                .await
-                .map_err(|error| fail(error.to_string()))?;
-            if genesis.header.hash.to_string() != genesis_hash.to_string() {
-                return Err(fail(
-                    "validator genesis does not match configured genesis".to_string(),
-                ));
-            }
-            let actual = activation_heights_from_upgrades(upgrades).map_err(&fail)?;
-            let mut expected = activation_heights;
-            // BeforeOverwinter has no consensus branch ID in the RPC report.
-            expected.before_overwinter = None;
-            if actual != expected {
-                return Err(fail(
-                    "validator upgrade schedule does not match configured schedule".to_string(),
-                ));
-            }
-            let network = zebra_chain::parameters::testnet::Parameters::build()
-                .with_network_name(zaino_common::CUSTOM_TESTNET_DISPLAY_NAME)
-                .map_err(|error| fail(error.to_string()))?
-                .with_genesis_hash(genesis_hash)
-                .map_err(|error| fail(error.to_string()))?
-                .with_activation_heights(activation_heights.into())
-                .map_err(|error| fail(error.to_string()))?
-                .clear_funding_streams()
-                .with_checkpoints(false)
-                .map_err(|error| fail(error.to_string()))?
-                .to_network()
-                .map_err(|error| fail(error.to_string()))?;
-            if network.genesis_hash()
-                == zebra_chain::parameters::Network::new_default_testnet().genesis_hash()
-            {
-                return Err(fail(
-                    "CustomTestnet must not use the public testnet genesis".to_string(),
-                ));
-            }
-            info!(%genesis_hash, "Verified custom testnet genesis and activation schedule");
-            Ok(network)
+            adopt_pinned_identity(
+                common,
+                source,
+                upgrades,
+                zaino_common::CUSTOM_TESTNET_DISPLAY_NAME,
+                genesis_hash,
+                activation_heights,
+            )
+            .await
+        }
+        zaino_common::Network::SwarmMain {
+            genesis_hash,
+            activation_heights,
+        } => {
+            adopt_pinned_identity(
+                common,
+                source,
+                upgrades,
+                zaino_common::SWARM_MAINNET_DISPLAY_NAME,
+                genesis_hash,
+                activation_heights,
+            )
+            .await
         }
     }
+}
+
+/// Verifies a chain that pins its own identity, and builds the runtime network
+/// from it.
+///
+/// SwarmTestnet and the SWARM production network both carry a genesis hash and
+/// an exact schedule in configuration, and neither is any chain zebra has
+/// compiled parameters for. Both are checked the same way, before the index is
+/// opened: the validator's height-zero block must be the configured genesis,
+/// and its reported upgrade schedule must be the configured one, exactly. A
+/// mismatch is unrecoverable rather than a warning, because the alternative is
+/// an index built over one chain and served as another.
+async fn adopt_pinned_identity(
+    common: &CommonBackendConfig,
+    source: &(impl GetBlockchainInfo + GetBlock),
+    upgrades: &[NetworkUpgradeInfo],
+    network_name: &str,
+    genesis_hash: zebra_chain::block::Hash,
+    activation_heights: zaino_common::config::network::ActivationHeights,
+) -> Result<zebra_chain::parameters::Network, BlockchainSourceError> {
+    let fail = |reason: String| {
+        BlockchainSourceError::Unrecoverable(format!(
+            "{network_name} identity check failed at {}: {reason}",
+            common.validator_rpc_address
+        ))
+    };
+    let genesis = source
+        .get_block(zaino_primitives::types::Height::GENESIS)
+        .await
+        .map_err(|error| fail(error.to_string()))?;
+    verify_pinned_identity(
+        &genesis.header.hash.to_string(),
+        genesis_hash,
+        activation_heights,
+        upgrades,
+    )
+    .map_err(&fail)?;
+    let network =
+        build_pinned_network(network_name, genesis_hash, activation_heights).map_err(&fail)?;
+    info!(%genesis_hash, %network_name, "Verified pinned genesis and activation schedule");
+    Ok(network)
+}
+
+/// Checks the validator against the identity the operator configured: the same
+/// height-zero block, and exactly the same upgrade schedule.
+///
+/// Separate from the source call so the refusal is testable without a
+/// validator, and so both pinned chains are held to one rule.
+fn verify_pinned_identity(
+    validator_genesis: &str,
+    genesis_hash: zebra_chain::block::Hash,
+    activation_heights: zaino_common::config::network::ActivationHeights,
+    upgrades: &[NetworkUpgradeInfo],
+) -> Result<(), String> {
+    if validator_genesis != genesis_hash.to_string() {
+        return Err("validator genesis does not match configured genesis".to_string());
+    }
+    let actual = activation_heights_from_upgrades(upgrades)?;
+    let mut expected = activation_heights;
+    // BeforeOverwinter has no consensus branch ID in the RPC report.
+    expected.before_overwinter = None;
+    if actual != expected {
+        return Err("validator upgrade schedule does not match configured schedule".to_string());
+    }
+    Ok(())
+}
+
+/// Builds the runtime network for a chain that pins its own identity.
+///
+/// The last check is the one that matters most: a pinned chain that ended up
+/// with a public chain's genesis is a misconfiguration serving one chain's
+/// index as another's, so it is refused rather than run.
+fn build_pinned_network(
+    network_name: &str,
+    genesis_hash: zebra_chain::block::Hash,
+    activation_heights: zaino_common::config::network::ActivationHeights,
+) -> Result<zebra_chain::parameters::Network, String> {
+    let network = zebra_chain::parameters::testnet::Parameters::build()
+        .with_network_name(network_name)
+        .map_err(|error| error.to_string())?
+        .with_genesis_hash(genesis_hash)
+        .map_err(|error| error.to_string())?
+        .with_activation_heights(activation_heights.into())
+        .map_err(|error| error.to_string())?
+        .clear_funding_streams()
+        .with_checkpoints(false)
+        .map_err(|error| error.to_string())?
+        .to_network()
+        .map_err(|error| error.to_string())?;
+    for (public, label) in [
+        (
+            zebra_chain::parameters::Network::new_default_testnet(),
+            "the public testnet",
+        ),
+        (zebra_chain::parameters::Network::Mainnet, "Zcash Mainnet"),
+    ] {
+        if network.genesis_hash() == public.genesis_hash() {
+            return Err(format!("{network_name} must not use {label}'s genesis"));
+        }
+    }
+    Ok(network)
 }
 
 /// Checks every `(upgrade, height)` the validator reports against `network`'s
@@ -400,5 +479,214 @@ mod verify_reported_upgrades {
 
         super::verify_reported_upgrades(&zebra_chain::parameters::Network::Mainnet, &upgrades)
             .expect("an unknown branch id must be skipped, not rejected");
+    }
+}
+
+/// The identity check both pinned chains go through before their index is
+/// opened. Driven directly rather than through a validator double: these are
+/// the comparisons, and the refusals are what a misconfigured deployment hits.
+#[cfg(test)]
+mod pinned_identity {
+    use super::test_upgrades::*;
+    use zaino_common::config::network::ActivationHeights;
+    use zaino_common::{Network, CUSTOM_TESTNET_DISPLAY_NAME, SWARM_MAINNET_DISPLAY_NAME};
+
+    /// A genesis nobody else has. Not the public testnet's, not Mainnet's.
+    const SWARM_MAINNET_GENESIS: &str =
+        "00d4b1cb01d6bd2d1a3a4a49bba6fd0a4c2e2f7c0d6e5b4a39281706f5e4d3c2";
+    const SWARM_TESTNET_GENESIS: &str =
+        "045993f5c91ea160c7ebda573dd97b0016816bca68d395bfff202779b88e2a28";
+
+    fn hash(hex: &str) -> zebra_chain::block::Hash {
+        hex.parse().expect("a 32-byte hex block hash")
+    }
+
+    /// Every upgrade at height 1: the SWARM schedule, on both chains.
+    fn everything_at_one() -> ActivationHeights {
+        ActivationHeights {
+            before_overwinter: Some(1),
+            overwinter: Some(1),
+            sapling: Some(1),
+            blossom: Some(1),
+            heartwood: Some(1),
+            canopy: Some(1),
+            nu5: Some(1),
+            nu6: Some(1),
+            nu6_1: Some(1),
+            nu6_2: Some(1),
+            nu6_3: Some(1),
+            nu7: None,
+        }
+    }
+
+    /// What a validator running that schedule reports. `BeforeOverwinter` has
+    /// no branch id, so it never appears.
+    fn reported_schedule() -> Vec<zaino_primitives::types::NetworkUpgradeInfo> {
+        vec![
+            upgrade(OVERWINTER, 1),
+            upgrade(SAPLING, 1),
+            upgrade(BLOSSOM, 1),
+            upgrade(HEARTWOOD, 1),
+            upgrade(CANOPY, 1),
+            upgrade(NU5, 1),
+            upgrade(NU6, 1),
+            upgrade(NU6_1, 1),
+            upgrade(NU6_2, 1),
+            upgrade(NU6_3, 1),
+        ]
+    }
+
+    fn swarm_mainnet() -> Network {
+        Network::SwarmMain {
+            genesis_hash: hash(SWARM_MAINNET_GENESIS),
+            activation_heights: everything_at_one(),
+        }
+    }
+
+    /// A validator serving the configured chain passes, and the network built
+    /// from it carries the configured identity.
+    #[test]
+    fn a_matching_validator_is_accepted() {
+        super::verify_pinned_identity(
+            SWARM_MAINNET_GENESIS,
+            hash(SWARM_MAINNET_GENESIS),
+            everything_at_one(),
+            &reported_schedule(),
+        )
+        .expect("the configured facts are the validator's facts");
+
+        let network = super::build_pinned_network(
+            SWARM_MAINNET_DISPLAY_NAME,
+            hash(SWARM_MAINNET_GENESIS),
+            everything_at_one(),
+        )
+        .expect("a pinned network builds from its own genesis");
+        assert_eq!(network.genesis_hash(), hash(SWARM_MAINNET_GENESIS));
+        assert_eq!(network.to_string(), SWARM_MAINNET_DISPLAY_NAME);
+    }
+
+    /// The failure this check exists for: a validator serving a different
+    /// chain. Opening the store against it would index that chain and serve it
+    /// as this one.
+    #[test]
+    fn a_foreign_genesis_is_refused() {
+        for foreign in [
+            SWARM_TESTNET_GENESIS,
+            &zebra_chain::parameters::Network::Mainnet
+                .genesis_hash()
+                .to_string(),
+            &zebra_chain::parameters::Network::new_default_testnet()
+                .genesis_hash()
+                .to_string(),
+        ] {
+            let reason = super::verify_pinned_identity(
+                foreign,
+                hash(SWARM_MAINNET_GENESIS),
+                everything_at_one(),
+                &reported_schedule(),
+            )
+            .expect_err("a foreign genesis must be refused");
+            assert!(reason.contains("genesis"), "{reason}");
+        }
+    }
+
+    /// A validator on the right chain but the wrong schedule is refused too:
+    /// an activation height disagreement corrupts the index just as silently.
+    #[test]
+    fn a_schedule_mismatch_is_refused() {
+        let mut reported = reported_schedule();
+        reported.pop();
+        let reason = super::verify_pinned_identity(
+            SWARM_MAINNET_GENESIS,
+            hash(SWARM_MAINNET_GENESIS),
+            everything_at_one(),
+            &reported,
+        )
+        .expect_err("a missing upgrade must be refused");
+        assert!(reason.contains("schedule"), "{reason}");
+
+        let mut late = reported_schedule();
+        late.pop();
+        late.push(upgrade(NU6_3, 2));
+        let reason = super::verify_pinned_identity(
+            SWARM_MAINNET_GENESIS,
+            hash(SWARM_MAINNET_GENESIS),
+            everything_at_one(),
+            &late,
+        )
+        .expect_err("a moved activation height must be refused");
+        assert!(reason.contains("schedule"), "{reason}");
+    }
+
+    /// A pinned chain configured with a public chain's genesis is a
+    /// misconfiguration, not a network.
+    #[test]
+    fn a_public_genesis_is_refused_for_a_pinned_chain() {
+        for public in [
+            zebra_chain::parameters::Network::Mainnet,
+            zebra_chain::parameters::Network::new_default_testnet(),
+        ] {
+            let reason = super::build_pinned_network(
+                SWARM_MAINNET_DISPLAY_NAME,
+                public.genesis_hash(),
+                everything_at_one(),
+            )
+            .expect_err("a public genesis must be refused");
+            assert!(reason.contains("must not use"), "{reason}");
+        }
+    }
+
+    /// SwarmTestnet's adoption is what it was: same name, same genesis, and
+    /// still not the public testnet.
+    #[test]
+    fn custom_testnet_adoption_is_unchanged() {
+        let network = super::build_pinned_network(
+            CUSTOM_TESTNET_DISPLAY_NAME,
+            hash(SWARM_TESTNET_GENESIS),
+            everything_at_one(),
+        )
+        .expect("SwarmTestnet builds from its own genesis");
+        assert_eq!(network.to_string(), CUSTOM_TESTNET_DISPLAY_NAME);
+        assert_eq!(network.genesis_hash(), hash(SWARM_TESTNET_GENESIS));
+        assert_ne!(
+            network.genesis_hash(),
+            zebra_chain::parameters::Network::new_default_testnet().genesis_hash(),
+        );
+
+        super::verify_pinned_identity(
+            SWARM_TESTNET_GENESIS,
+            hash(SWARM_TESTNET_GENESIS),
+            everything_at_one(),
+            &reported_schedule(),
+        )
+        .expect("SwarmTestnet still adopts its configured schedule");
+    }
+
+    /// The two SWARM chains are separate everywhere it counts: the label they
+    /// publish, the network type their addresses are read against, and the
+    /// genesis they pin.
+    #[test]
+    fn the_two_swarm_chains_never_fold_together() {
+        use zcash_protocol::consensus::NetworkType;
+
+        let testnet = Network::CustomTestnet {
+            genesis_hash: hash(SWARM_TESTNET_GENESIS),
+            activation_heights: everything_at_one(),
+        };
+        let mainnet = swarm_mainnet();
+
+        assert_eq!(mainnet.lightwallet_chain_name(), "swarm-mainnet");
+        assert_eq!(testnet.lightwallet_chain_name(), "swarm-testnet");
+        assert_eq!(Network::Mainnet.lightwallet_chain_name(), "main");
+
+        assert_eq!(mainnet.network_type(), NetworkType::SwarmMain);
+        assert_eq!(testnet.network_type(), NetworkType::Test);
+        assert_eq!(Network::Mainnet.network_type(), NetworkType::Main);
+
+        assert_ne!(
+            mainnet.expected_genesis_hash(),
+            testnet.expected_genesis_hash()
+        );
+        assert_eq!(Network::Mainnet.expected_genesis_hash(), None);
     }
 }

@@ -157,6 +157,7 @@ impl ZcashService for NodeBackedIndexerService<ZebraValidatorSource> {
         let data = ServiceMetadata::new(
             get_build_info(config.common.indexer_version.clone()),
             network.clone(),
+            config.common.network.clone(),
             zebra_build_data.build,
             zebra_build_data.subversion,
         );
@@ -358,6 +359,7 @@ fn test_service_parts(
         ServiceMetadata::new(
             get_build_info("test".to_string()),
             network,
+            network_kind.clone(),
             "test-build".to_string(),
             "test-subversion".to_string(),
         ),
@@ -848,16 +850,21 @@ impl<Source: BlockchainSource + WithChainHeadSource + WithChainStoreSource> Zcas
     /// method: post
     /// tags: blockchain
     async fn validate_address(&self, address: String) -> Result<ValidatedAddress, Self::Error> {
-        #[allow(deprecated)]
-        let network = self.data.network();
-        Ok(zaino_address::validate_address(address, &network))
+        // The configured kind, not the runtime zebra network: zebra answers
+        // `Test` for every configured testnet, so a SWARM production indexer
+        // reading its network type from there would refuse its own addresses
+        // and accept SwarmTestnet's.
+        Ok(zaino_address::validate_address(
+            address,
+            self.data.network_type(),
+        ))
     }
 
-    #[allow(deprecated)]
     async fn z_validate_address(&self, address: String) -> Result<ZValidatedAddress, Self::Error> {
-        #[allow(deprecated)]
-        let network = self.data.network();
-        Ok(zaino_address::z_validate_address(address, &network))
+        Ok(zaino_address::z_validate_address(
+            address,
+            self.data.network_type(),
+        ))
     }
 
     /// Returns all transaction ids in the memory pool, as a JSON array.

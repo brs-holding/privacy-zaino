@@ -5,7 +5,7 @@
 //! *different* network is reported invalid rather than accepted.
 
 use zcash_keys::{address::Address, encoding::AddressCodec as _};
-use zcash_protocol::consensus::Parameters;
+use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parameters};
 use zcash_transparent::address::TransparentAddress;
 
 use crate::{
@@ -13,15 +13,33 @@ use crate::{
     validated::{ValidatedAddress, ZValidatedAddress, DEPRECATION_NOTICE},
 };
 
-/// Parses `raw_address` for `params`' network, returning `None` if it does not
-/// parse or belongs to another network.
+/// A [`Parameters`] that carries a network type and nothing else.
+///
+/// The encoders take a `Parameters` in order to read a network type out of it, and
+/// this crate is handed the network type directly. No activation height is read
+/// while encoding or decoding an address, so there is none to supply.
+#[derive(Clone, Copy)]
+struct AddressNetwork(NetworkType);
+
+impl Parameters for AddressNetwork {
+    fn network_type(&self) -> NetworkType {
+        self.0
+    }
+
+    fn activation_height(&self, _nu: NetworkUpgrade) -> Option<BlockHeight> {
+        None
+    }
+}
+
+/// Parses `raw_address` for `network`, returning `None` if it does not parse
+/// or belongs to another network.
 ///
 /// Shared by both entry points so the two RPCs cannot disagree about which
 /// addresses exist.
-fn parse_for_network<P: Parameters>(raw_address: &str, params: &P) -> Option<Address> {
+fn parse_for_network(raw_address: &str, network: NetworkType) -> Option<Address> {
     let parsed = raw_address.parse::<zcash_address::ZcashAddress>().ok()?;
 
-    match parsed.convert_if_network::<Address>(params.network_type()) {
+    match parsed.convert_if_network::<Address>(network) {
         Ok(address) => Some(address),
         Err(err) => {
             tracing::debug!(?err, "conversion error");
@@ -32,9 +50,9 @@ fn parse_for_network<P: Parameters>(raw_address: &str, params: &P) -> Option<Add
 
 /// Classifies an address for the `validateaddress` RPC.
 ///
-/// Pure address parsing over `params`; no chain data required.
-pub fn validate_address<P: Parameters>(raw_address: String, params: &P) -> ValidatedAddress {
-    match parse_for_network(&raw_address, params) {
+/// Pure address parsing over `network`; no chain data required.
+pub fn validate_address(raw_address: String, network: NetworkType) -> ValidatedAddress {
+    match parse_for_network(&raw_address, network) {
         Some(Address::Transparent(taddr)) => ValidatedAddress::Transparent {
             is_script: matches!(taddr, TransparentAddress::ScriptHash(_)),
             address: raw_address,
@@ -45,19 +63,19 @@ pub fn validate_address<P: Parameters>(raw_address: String, params: &P) -> Valid
 
 /// Classifies an address for the deprecated `z_validateaddress` RPC.
 ///
-/// Pure address parsing over `params`; no chain data required.
+/// Pure address parsing over `network`; no chain data required.
 ///
 /// # Deprecation
 ///
 /// Emits [`DEPRECATION_NOTICE`] on every call.
-pub fn z_validate_address<P: Parameters>(raw_address: String, params: &P) -> ZValidatedAddress {
+pub fn z_validate_address(raw_address: String, network: NetworkType) -> ZValidatedAddress {
     tracing::warn!("{}", DEPRECATION_NOTICE);
 
     // The transparent arms echo the caller's string; the shielded arms
     // re-encode, because `convert_if_network` has already proved the address
     // belongs to this network and the canonical encoding is what the legacy full node
     // reports.
-    match parse_for_network(&raw_address, params) {
+    match parse_for_network(&raw_address, network) {
         Some(Address::Transparent(TransparentAddress::PublicKeyHash(_))) => {
             ZValidatedAddress::P2pkh {
                 address: raw_address,
@@ -69,13 +87,13 @@ pub fn z_validate_address<P: Parameters>(raw_address: String, params: &P) -> ZVa
         Some(Address::Sapling(sapling)) => {
             let (diversifier, diversified_transmission_key) = sapling_key_bytes(&sapling);
             ZValidatedAddress::Sapling {
-                address: sapling.encode(params),
+                address: sapling.encode(&AddressNetwork(network)),
                 diversifier,
                 diversified_transmission_key,
             }
         }
         Some(Address::Unified(unified)) => ZValidatedAddress::Unified {
-            address: unified.encode(params),
+            address: unified.encode(&AddressNetwork(network)),
         },
         // Sprout, and any address kind a future `Address` variant introduces.
         // Reporting "invalid" rather than guessing preserves the previous
@@ -87,29 +105,12 @@ pub fn z_validate_address<P: Parameters>(raw_address: String, params: &P) -> ZVa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zcash_protocol::consensus::{NetworkType, Parameters};
+    use zcash_protocol::consensus::NetworkType;
 
-    /// A minimal [`Parameters`] carrying only a network type — the classifier
-    /// reads nothing else, so the tests need nothing else.
-    #[derive(Clone)]
-    struct Net(NetworkType);
-
-    impl Parameters for Net {
-        fn network_type(&self) -> NetworkType {
-            self.0
-        }
-
-        fn activation_height(
-            &self,
-            _nu: zcash_protocol::consensus::NetworkUpgrade,
-        ) -> Option<zcash_protocol::consensus::BlockHeight> {
-            None
-        }
-    }
-
-    const TEST: Net = Net(NetworkType::Test);
-    const REGTEST: Net = Net(NetworkType::Regtest);
-    const MAIN: Net = Net(NetworkType::Main);
+    const TEST: NetworkType = NetworkType::Test;
+    const REGTEST: NetworkType = NetworkType::Regtest;
+    const MAIN: NetworkType = NetworkType::Main;
+    const SWARM_MAIN: NetworkType = NetworkType::SwarmMain;
 
     #[test]
     fn swarm_and_legacy_unified_addresses_classify_identically() {
@@ -122,10 +123,10 @@ mod tests {
         let expected = ZValidatedAddress::Unified {
             address: canonical.clone(),
         };
-        assert_eq!(z_validate_address(LEGACY.into(), &TEST), expected);
-        assert_eq!(z_validate_address(canonical.clone(), &TEST), expected);
+        assert_eq!(z_validate_address(LEGACY.into(), TEST), expected);
+        assert_eq!(z_validate_address(canonical.clone(), TEST), expected);
         assert_eq!(
-            z_validate_address(canonical, &MAIN),
+            z_validate_address(canonical, MAIN),
             ZValidatedAddress::Invalid
         );
     }
@@ -143,11 +144,11 @@ mod tests {
     #[test]
     fn unparseable_is_invalid() {
         assert_eq!(
-            validate_address("not an address".into(), &TEST),
+            validate_address("not an address".into(), TEST),
             ValidatedAddress::Invalid
         );
         assert_eq!(
-            z_validate_address("not an address".into(), &TEST),
+            z_validate_address("not an address".into(), TEST),
             ZValidatedAddress::Invalid
         );
     }
@@ -158,11 +159,11 @@ mod tests {
     #[test]
     fn wrong_network_is_invalid() {
         assert_eq!(
-            validate_address(TESTNET_P2PKH.into(), &MAIN),
+            validate_address(TESTNET_P2PKH.into(), MAIN),
             ValidatedAddress::Invalid
         );
         assert_eq!(
-            z_validate_address(TESTNET_P2PKH.into(), &MAIN),
+            z_validate_address(TESTNET_P2PKH.into(), MAIN),
             ZValidatedAddress::Invalid
         );
     }
@@ -170,14 +171,14 @@ mod tests {
     #[test]
     fn p2pkh_and_p2sh_are_distinguished() {
         assert_eq!(
-            validate_address(TESTNET_P2PKH.into(), &TEST),
+            validate_address(TESTNET_P2PKH.into(), TEST),
             ValidatedAddress::Transparent {
                 address: TESTNET_P2PKH.into(),
                 is_script: false,
             }
         );
         assert_eq!(
-            validate_address(TESTNET_P2SH.into(), &TEST),
+            validate_address(TESTNET_P2SH.into(), TEST),
             ValidatedAddress::Transparent {
                 address: TESTNET_P2SH.into(),
                 is_script: true,
@@ -185,13 +186,13 @@ mod tests {
         );
 
         assert_eq!(
-            z_validate_address(TESTNET_P2PKH.into(), &TEST),
+            z_validate_address(TESTNET_P2PKH.into(), TEST),
             ZValidatedAddress::P2pkh {
                 address: TESTNET_P2PKH.into()
             }
         );
         assert_eq!(
-            z_validate_address(TESTNET_P2SH.into(), &TEST),
+            z_validate_address(TESTNET_P2SH.into(), TEST),
             ZValidatedAddress::P2sh {
                 address: TESTNET_P2SH.into()
             }
@@ -203,11 +204,11 @@ mod tests {
     #[test]
     fn validate_address_rejects_shielded() {
         assert_eq!(
-            validate_address(REGTEST_SAPLING.into(), &REGTEST),
+            validate_address(REGTEST_SAPLING.into(), REGTEST),
             ValidatedAddress::Invalid
         );
         assert_eq!(
-            validate_address(REGTEST_UNIFIED.into(), &REGTEST),
+            validate_address(REGTEST_UNIFIED.into(), REGTEST),
             ValidatedAddress::Invalid
         );
     }
@@ -217,11 +218,11 @@ mod tests {
     #[test]
     fn z_validate_address_classifies_shielded() {
         assert!(matches!(
-            z_validate_address(REGTEST_SAPLING.into(), &REGTEST),
+            z_validate_address(REGTEST_SAPLING.into(), REGTEST),
             ZValidatedAddress::Sapling { .. }
         ));
         assert!(matches!(
-            z_validate_address(REGTEST_UNIFIED.into(), &REGTEST),
+            z_validate_address(REGTEST_UNIFIED.into(), REGTEST),
             ZValidatedAddress::Unified { .. }
         ));
     }
@@ -230,7 +231,7 @@ mod tests {
     /// RPCs report invalid rather than describing it.
     #[test]
     fn sprout_is_invalid() {
-        for network in [&TEST, &REGTEST, &MAIN] {
+        for network in [TEST, REGTEST, MAIN] {
             assert_eq!(
                 validate_address(SPROUT.into(), network),
                 ValidatedAddress::Invalid
@@ -240,5 +241,87 @@ mod tests {
                 ZValidatedAddress::Invalid
             );
         }
+    }
+
+    /// The SWARM production network classifies its own encodings and refuses
+    /// every other chain's, including SwarmTestnet's, whose addresses a
+    /// zebra-derived network type would have let through.
+    #[test]
+    fn swarm_mainnet_classifies_only_its_own_addresses() {
+        const SWARM_MAINNET_P2PKH: &str = "s1MCkDhVejM4RqDyRR1rEJkudd26FVWipPD";
+        const SWARM_MAINNET_P2SH: &str = "s3Mtm9Ez6HFNovPfrY7WpjPGZmYNxztrxbb";
+
+        assert_eq!(
+            validate_address(SWARM_MAINNET_P2PKH.into(), SWARM_MAIN),
+            ValidatedAddress::Transparent {
+                is_script: false,
+                address: SWARM_MAINNET_P2PKH.into(),
+            }
+        );
+        assert_eq!(
+            validate_address(SWARM_MAINNET_P2SH.into(), SWARM_MAIN),
+            ValidatedAddress::Transparent {
+                is_script: true,
+                address: SWARM_MAINNET_P2SH.into(),
+            }
+        );
+
+        for foreign in [
+            TESTNET_P2PKH,
+            TESTNET_P2SH,
+            REGTEST_SAPLING,
+            REGTEST_UNIFIED,
+        ] {
+            assert_eq!(
+                validate_address(foreign.into(), SWARM_MAIN),
+                ValidatedAddress::Invalid,
+                "{foreign} is not a swarm-mainnet address",
+            );
+        }
+        for network in [TEST, REGTEST, MAIN] {
+            for ours in [SWARM_MAINNET_P2PKH, SWARM_MAINNET_P2SH] {
+                assert_eq!(
+                    validate_address(ours.into(), network),
+                    ValidatedAddress::Invalid,
+                    "{ours} is not a {network:?} address",
+                );
+            }
+        }
+    }
+
+    /// The shielded arms re-encode, so the SWARM production HRPs have to come out
+    /// of them rather than an upstream chain's.
+    ///
+    /// The address is the regtest vector's payment address under the SWARM
+    /// production HRP: a payment address is a curve point, so it is taken from a
+    /// known-good one rather than written out.
+    #[test]
+    fn swarm_mainnet_shielded_addresses_re_encode_under_their_own_hrps() {
+        use zcash_keys::encoding::{decode_payment_address, encode_payment_address};
+        use zcash_protocol::consensus::NetworkConstants as _;
+
+        let payment =
+            decode_payment_address(REGTEST.hrp_sapling_payment_address(), REGTEST_SAPLING)
+                .expect("the regtest vector is a payment address");
+        let swarm_mainnet_sapling =
+            encode_payment_address(SWARM_MAIN.hrp_sapling_payment_address(), &payment);
+        assert!(
+            swarm_mainnet_sapling.starts_with("zswmsapling1"),
+            "{swarm_mainnet_sapling}",
+        );
+
+        let classified = z_validate_address(swarm_mainnet_sapling.clone(), SWARM_MAIN);
+        let ZValidatedAddress::Sapling { address, .. } = classified else {
+            panic!("a swarm-mainnet sapling address classifies as sapling: {classified:?}");
+        };
+        assert_eq!(address, swarm_mainnet_sapling);
+        assert_eq!(
+            z_validate_address(swarm_mainnet_sapling, TEST),
+            ZValidatedAddress::Invalid,
+        );
+        assert_eq!(
+            z_validate_address(REGTEST_SAPLING.into(), SWARM_MAIN),
+            ZValidatedAddress::Invalid,
+        );
     }
 }

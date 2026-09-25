@@ -16,6 +16,7 @@ pub use net::{resolve_socket_addr, try_resolve_address, AddressResolution};
 // This allows existing code using `use zaino_common::Network` to continue working.
 pub use config::network::{
     ActivationHeights, Network, CUSTOM_TESTNET_CHAIN_NAME, CUSTOM_TESTNET_DISPLAY_NAME,
+    SWARM_MAINNET_CHAIN_NAME, SWARM_MAINNET_DISPLAY_NAME,
 };
 pub use config::service::ServiceConfig;
 pub use config::storage::{

@@ -71,6 +71,12 @@ pub(crate) fn get_build_info(version: String) -> BuildInfo {
 pub struct ServiceMetadata {
     build_info: BuildInfo,
     network: Network,
+    /// The configured network kind, carried alongside the runtime network.
+    ///
+    /// Zebra's `Network` has two kinds and reports `Test` for every configured
+    /// testnet, so it cannot name the network an address encoding belongs to.
+    /// The configured kind can, and the address-validation RPCs read it here.
+    network_kind: zaino_common::Network,
     zebra_build: String,
     zebra_subversion: String,
 }
@@ -79,15 +85,22 @@ impl ServiceMetadata {
     pub(crate) fn new(
         build_info: BuildInfo,
         network: Network,
+        network_kind: zaino_common::Network,
         zebra_build: String,
         zebra_subversion: String,
     ) -> Self {
         Self {
             build_info,
             network,
+            network_kind,
             zebra_build,
             zebra_subversion,
         }
+    }
+
+    /// The network type the served addresses are encoded for.
+    pub(crate) fn network_type(&self) -> zcash_protocol::consensus::NetworkType {
+        self.network_kind.network_type()
     }
 
     pub(crate) fn build_info(&self) -> BuildInfo {

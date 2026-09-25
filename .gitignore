@@ -11,6 +11,11 @@ target/
 !/live-tests/chain_cache/testnet_get_subtree_roots_sapling
 !/live-tests/chain_cache/testnet_get_subtree_roots_orchard
 .cargo
+# ... except the vendored crates' own, which selects the sibling vendored sources
+# when one of those crates is built or tested on its own. Without it a standalone
+# run resolves the registry copies and tests the wrong constants.
+!vendor/*/.cargo/
+!vendor/*/.cargo/config.toml
 .local/
 build/
 **/proptest-regressions/**

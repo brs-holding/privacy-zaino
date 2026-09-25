@@ -37,6 +37,9 @@ zaino-state = { workspace = true }
 
 # Zebra
 zebra-chain = { workspace = true }
+# The network type an address encoding is read against, for the
+# address-validation vectors.
+zcash_protocol = { workspace = true }
 zebra-rpc = { workspace = true }
 
 # Tracing

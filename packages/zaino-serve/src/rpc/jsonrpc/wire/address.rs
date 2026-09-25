@@ -277,7 +277,7 @@ mod tests {
 mod served_vectors {
     use super::*;
     use serde_json::{json, Value};
-    use zebra_chain::parameters::Network;
+    use zcash_protocol::consensus::NetworkType;
 
     // Captured from zcashd's `z_validateaddress`.
     const P2PKH: &str = "tmVqEASZxBNKFTbmASZikGa5fPLkd68iJyx";
@@ -289,7 +289,7 @@ mod served_vectors {
     const UNIFIED: &str = "uregtest1njwg60x0jarhyuuxrcdvw854p68cgdfe85822lmclc7z9vy9xqr7t49n3d97k2dwlee82skwwe0ens0rc06p4vr04tvd3j9ckl3qry83ckay4l4ngdq9atg7vuj9z58tfjs0mnsgyrnprtqfv8almu564z498zy6tp2aa569tk8fyhdazyhytel2m32awe4kuy6qq996um3ljaajj36";
     const SPROUT: &str = "ztfhKyLouqi8sSwjRm4YMQdWPjTmrJ4QgtziVQ1Kd1e9EsRHYKofjoJdF438FwcUQnix8yrbSrzPpJJNABewgNffs5d4YZJ";
 
-    fn served(address: &str, network: &Network) -> Value {
+    fn served(address: &str, network: NetworkType) -> Value {
         serde_json::to_value(ZValidateAddressWire::from_domain(
             zaino_address::z_validate_address(address.to_string(), network),
         ))
@@ -300,7 +300,7 @@ mod served_vectors {
     /// under both keys, so both are pinned for every kind.
     #[test]
     fn each_kind_serves_its_own_shape() {
-        let network = Network::new_regtest(Default::default());
+        let network = NetworkType::Regtest;
 
         for (address, expected) in [
             (
@@ -342,7 +342,7 @@ mod served_vectors {
                 }),
             ),
         ] {
-            assert_eq!(served(address, &network), expected, "{address}");
+            assert_eq!(served(address, network), expected, "{address}");
         }
     }
 
@@ -350,7 +350,7 @@ mod served_vectors {
     /// failing to parse it — the only thing to assert about it is "invalid".
     #[test]
     fn unclassifiable_addresses_serve_isvalid_false_alone() {
-        let network = Network::new_regtest(Default::default());
+        let network = NetworkType::Regtest;
 
         for address in [
             SPROUT,
@@ -359,7 +359,7 @@ mod served_vectors {
             "not an address",
         ] {
             assert_eq!(
-                served(address, &network),
+                served(address, network),
                 json!({ "isvalid": false }),
                 "{address}"
             );
@@ -370,11 +370,11 @@ mod served_vectors {
     /// regtest vectors are rejected on mainnet and vice versa.
     #[test]
     fn network_scoping_rejects_foreign_addresses() {
-        let mainnet = Network::Mainnet;
+        let mainnet = NetworkType::Main;
 
         for address in [P2PKH, P2SH, SAPLING, UNIFIED] {
             assert_eq!(
-                served(address, &mainnet),
+                served(address, mainnet),
                 json!({ "isvalid": false }),
                 "{address} is not a mainnet address"
             );
