@@ -966,6 +966,11 @@ impl<T: ChainStoreSource> FinalisedState<T> {
             NetworkKind::Mainnet => "live",
             NetworkKind::Testnet => "test",
             NetworkKind::Regtest => "local",
+            // No pre-versioned database was ever written for the SWARM production network:
+            // it did not exist before the versioned layout. The name is still distinct, so
+            // the probe looks for a directory that cannot exist rather than at another
+            // network's.
+            NetworkKind::SwarmMainnet => "swarm-main",
         };
         let legacy_path = db_root.join(legacy_dir);
         if legacy_path.join("data.mdb").exists() && legacy_path.join("lock.mdb").exists() {
@@ -976,6 +981,8 @@ impl<T: ChainStoreSource> FinalisedState<T> {
             NetworkKind::Mainnet => "mainnet",
             NetworkKind::Testnet => "testnet",
             NetworkKind::Regtest => "regtest",
+            // Matches the directory `DbV1` opens; see the note there.
+            NetworkKind::SwarmMainnet => "swarm-mainnet",
         };
         let net_path = db_root.join(net_dir);
         if net_path.exists() && net_path.is_dir() {

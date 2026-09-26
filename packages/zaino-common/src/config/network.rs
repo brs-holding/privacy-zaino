@@ -363,13 +363,32 @@ impl Network {
 
 impl From<zebra_chain::parameters::Network> for Network {
     fn from(value: zebra_chain::parameters::Network) -> Self {
-        match value {
+        match &value {
             zebra_chain::parameters::Network::Mainnet => Network::Mainnet,
             zebra_chain::parameters::Network::Testnet(parameters) => {
                 if parameters.is_regtest() {
                     Network::Regtest
                 } else {
                     Network::PubTestnet
+                }
+            }
+            // The node's own SWARM production profile. The indexer never builds this
+            // variant itself -- it adopts a pinned network from the validator's reported
+            // genesis and schedule, which `network_adoption` assembles as a named custom
+            // network -- but a caller holding the node's runtime network must not have
+            // the production chain folded into `PubTestnet`. The schedule is read back
+            // through `full_activation_list`, which resolves every upgrade rather than
+            // only the ones the compiled list names explicitly.
+            zebra_chain::parameters::Network::SwarmMain(parameters) => {
+                let mut activation_heights = ActivationHeights::NEVER_ACTIVATED;
+                for (height, upgrade) in value.full_activation_list() {
+                    if let Some(slot) = activation_heights.slot_mut(upgrade) {
+                        *slot = Some(height.0);
+                    }
+                }
+                Network::SwarmMain {
+                    genesis_hash: parameters.genesis_hash(),
+                    activation_heights,
                 }
             }
         }
@@ -601,23 +620,26 @@ mod tests {
             .expect("zebra must accept the custom testnet display name");
     }
 
-    /// Zebra has no network kind for the SWARM production network, so a SWARM
-    /// production address cannot become a zebra address at all. Without this the
-    /// vendored conversion could quietly read `swm1…` as Mainnet.
+    /// A SWARM production address must never be readable as a Zcash one.
+    ///
+    /// The indexer now links the node's `zebra-chain`, which names the production
+    /// network in its own right as [`NetworkKind::SwarmMainnet`] rather than refusing
+    /// the conversion, so the assertion is the same property stated the other way
+    /// round: `s1…`/`s3…` convert, and what they convert to is the SWARM kind and
+    /// never Mainnet's. The vendored copy this replaced could only express the
+    /// property as a refusal, because it had no kind to convert into.
     #[test]
-    fn swarm_mainnet_addresses_have_no_zebra_network_kind() {
+    fn swarm_mainnet_addresses_carry_their_own_zebra_network_kind() {
         use zcash_protocol::consensus::NetworkType;
         use zebra_chain::parameters::NetworkKind;
-        use zebra_chain::primitives::{Address, UnsupportedNetworkType};
+        use zebra_chain::primitives::Address;
 
-        assert_eq!(
-            NetworkKind::try_from(NetworkType::SwarmMain),
-            Err(UnsupportedNetworkType(NetworkType::SwarmMain)),
-        );
+        // The mapping is a bijection, and the SWARM row is in it exactly once.
         for (network_type, kind) in [
             (NetworkType::Main, NetworkKind::Mainnet),
             (NetworkType::Test, NetworkKind::Testnet),
             (NetworkType::Regtest, NetworkKind::Regtest),
+            (NetworkType::SwarmMain, NetworkKind::SwarmMainnet),
         ] {
             assert_eq!(NetworkKind::try_from(network_type), Ok(kind));
             assert_eq!(NetworkType::from(kind), network_type);
@@ -630,10 +652,14 @@ mod tests {
         ] {
             let parsed: zcash_address::ZcashAddress =
                 encoded.parse().expect("parses in zcash_address");
-            // ... and zebra refuses to convert them into one of its own.
-            assert!(
-                parsed.convert::<Address>().is_err(),
-                "{encoded} must not convert to a zebra address",
+            // ... and zebra reads them onto the SWARM production network, not Zcash's.
+            let converted = parsed
+                .convert::<Address>()
+                .expect("a SWARM production address is a zebra SwarmMainnet address");
+            assert_eq!(
+                converted.network(),
+                NetworkKind::SwarmMainnet,
+                "{encoded} must be a SwarmMainnet address",
             );
         }
     }

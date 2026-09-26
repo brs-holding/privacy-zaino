@@ -500,6 +500,13 @@ impl DbV1 {
             NetworkKind::Mainnet => "mainnet",
             NetworkKind::Testnet => "testnet",
             NetworkKind::Regtest => "regtest",
+            // Its own directory, disjoint from every upstream one, so a SWARM production
+            // index can never be opened as a Zcash one. Unreachable for this indexer as
+            // deployed: the SWARM production runtime network is assembled by
+            // `network_adoption` as a named custom network, whose kind is `Testnet`. The
+            // arm exists because the node's `NetworkKind` names the production network and
+            // a directory must never be guessed for it.
+            NetworkKind::SwarmMainnet => "swarm-mainnet",
         };
         // A v1 backend is only ever opened for a store that persists, so an
         // absent path is a routing mistake above rather than a configuration an

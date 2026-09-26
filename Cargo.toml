@@ -5,7 +5,6 @@ exclude = [
     "vendor/zcash_primitives",
     "vendor/zcash_protocol",
     "vendor/zcash_transparent",
-    "vendor/zebra-chain",
 ]
 members = [
     "packages/zaino-status",
@@ -249,6 +248,18 @@ zcash_primitives = { path = "vendor/zcash_primitives" }
 # Vendored so the exhaustive `NetworkType` match in its `zip48` module handles
 # `NetworkType::SwarmMain` explicitly; see vendor/README.md.
 zcash_transparent = { path = "vendor/zcash_transparent" }
-# Vendored so the exhaustive `NetworkType` match in its `NetworkKind` conversion
-# answers for the SWARM production network; see vendor/README.md.
-zebra-chain = { path = "vendor/zebra-chain" }
+# The SWARM production consensus domain `SWM1` (0x53574d31) is a transaction-decoding
+# fact, not a configuration one: a V5 transaction naming it can only be deserialized by a
+# `zebra-chain` whose recognized-domain registry admits it. The published 12.0.0 crate
+# resolves `nConsensusBranchId` through `NetworkUpgrade::try_from`, which knows the upstream
+# table only, so every SwarmMainnet block failed with `invalid consensus branch id`. The
+# node's crates carry `DomainRegistry::ADMITTED` — the union of the upstream and SWARM
+# production families — and the whole zebra stack is taken from the node's revision so that
+# `zebra-state` and `zebra-rpc` link the same `zebra-chain`, and `BranchId::SwarmMain` is one
+# type across the indexer and the validator it reads. This supersedes the vendored
+# `zebra-chain` copy, which is removed: its `NetworkKind` conversion now lives upstream of us
+# in the node's tree, as `NetworkKind::SwarmMainnet`.
+zebra-chain = { git = "https://github.com/Swarm-Official/privacy-zebra.git", rev = "01b9da3de144a6deb4dd631396cbbc3bfb7c6d81" }
+zebra-state = { git = "https://github.com/Swarm-Official/privacy-zebra.git", rev = "01b9da3de144a6deb4dd631396cbbc3bfb7c6d81" }
+zebra-rpc = { git = "https://github.com/Swarm-Official/privacy-zebra.git", rev = "01b9da3de144a6deb4dd631396cbbc3bfb7c6d81" }
+zebra-node-services = { git = "https://github.com/Swarm-Official/privacy-zebra.git", rev = "01b9da3de144a6deb4dd631396cbbc3bfb7c6d81" }

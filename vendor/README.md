@@ -27,7 +27,6 @@ protocol crate unpatched. Each archive's SHA-256 is the `checksum` this workspac
 
 - zcash_transparent 0.10.0, archive SHA256 547c012778bae17f58007731af074d638aa146ab0ecfc120adebf23d049aff6c
 - zcash_primitives 0.30.0, archive SHA256 34ca4de11896f704ffe6319c2cd7bc8fc6ab31a55cec80d26def15c009d83678
-- zebra-chain 12.0.0, archive SHA256 b270bc7ec8f48cf58d14368c3521201947df137fc0e52633e81297250b2e3e0e
 
 `zcash_protocol` gains `NetworkType::SwarmMain` and its constants module
 `constants/swarm_mainnet.rs`, and `BranchId::SwarmMain`, the SWARM production
@@ -49,12 +48,26 @@ SWARM domain in `TxVersion::suggested_for_branch`, `TxVersion::valid_in_branch` 
 the builder's Ironwood gate, and the domain reaches the ZIP 244 digests through
 `u32::from(branch)` with no match to change.
 
-`zebra-chain` converts a `NetworkType` into its own `NetworkKind`, exhaustively.
-That conversion is now a `TryFrom` that refuses `SwarmMain` with
-`UnsupportedNetworkType`, so a `s1…`/`s3…`/`swm1…` string cannot become a zebra
-address on a network zebra has no profile for, and cannot be read as Mainnet's.
-`zebra-state` and `zebra-rpc` stay on their published versions and resolve the
-patched `zebra-chain`; nothing outside this crate used the conversion.
+`zebra-chain` was vendored here too, for the same reason: its `NetworkType` ->
+`NetworkKind` conversion is exhaustive. **It no longer is**, as of 2026-09-26. The
+vendored copy was published 12.0.0 with that one conversion changed, and its
+transaction decoder therefore still resolved a V5/V6 `nConsensusBranchId` through
+`NetworkUpgrade::try_from`, which knows the upstream table only. Against the live
+SWARM production chain that rejected every block with
+`parse error: invalid consensus branch id`, because every transaction on it names the
+SWARM domain `0x53574d31`. A vendored decoder was the wrong shape for the problem: the
+domain is the node's, and only the node's crates carry the registry that admits it.
+
+So the whole zebra stack the indexer links -- `zebra-chain`, `zebra-state`, `zebra-rpc`
+and `zebra-node-services` -- is now taken from the node itself, by `[patch.crates-io]`
+git entries on `Swarm-Official/privacy-zebra` at the revision the deployed node is
+built from. There, `DomainRegistry::ADMITTED` (the union of the upstream and SWARM
+production families) is what the network-free decoders resolve through, and
+`NetworkKind::SwarmMainnet` is a kind of its own, so an `s1…`/`s3…`/`swm1…` string
+converts to a zebra address on the SWARM production network and never to a Zcash one.
+Taking all four from one revision is what keeps `zebra-state` and `zebra-rpc` linking
+the same `zebra-chain`, and `BranchId::SwarmMain` a single type across the indexer and
+the validator it reads.
 
 Each vendored crate carries an empty `[workspace]` table and its own
 `[patch.crates-io]`, or a `.cargo/config.toml` holding the same patch, so that running

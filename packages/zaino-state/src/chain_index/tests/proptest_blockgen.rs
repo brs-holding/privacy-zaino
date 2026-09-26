@@ -583,7 +583,12 @@ fn fake_orchard_transaction() -> zebra_chain::transaction::Transaction {
     use zebra_chain::transaction::{LockTime, Transaction};
 
     Transaction::V5 {
-        network_upgrade: NetworkUpgrade::Nu5,
+        // The node's `zebra-chain` stores the raw domain a V5 transaction names rather
+        // than the upgrade it implies, because the SWARM production domain `SWM1` is
+        // named by no upgrade. This fixture is upstream content, so it names NU5's.
+        consensus_branch_id: NetworkUpgrade::Nu5
+            .branch_id()
+            .expect("NU5 has a consensus branch ID"),
         lock_time: LockTime::unlocked(),
         expiry_height: zebra_chain::block::Height(0),
         inputs: Vec::new(),
